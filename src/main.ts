@@ -2,7 +2,7 @@ import './style.css'
 import logoIbn from './assets/logo-ibn.png'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { loginPks } from './auth'
+import { loginDemoPks } from './demoAuth'
 
 type PhotoData = {
   id: string
@@ -179,7 +179,7 @@ function renderShell(content: string, showBackButton = false) {
               class="back-dashboard-button"
               type="button"
               id="backDashboard">
-              ← Kembali ke Portal Utama
+              â† Kembali ke Portal Utama
             </button>
           ` : ''}
 
@@ -196,7 +196,7 @@ function renderShell(content: string, showBackButton = false) {
 
       <footer class="site-footer">
         <span>SIPAPUA Portal PKS</span>
-        <span>© 2026 Pondok Pemulihan Papua</span>
+        <span>Â© 2026 Pondok Pemulihan Papua</span>
       </footer>
     </div>
   `
@@ -227,7 +227,7 @@ function openPksLogin() {
             type="button"
             id="closePksLogin"
             aria-label="Tutup">
-            ×
+            Ã—
           </button>
         </div>
 
@@ -244,11 +244,14 @@ function openPksLogin() {
 
             <div class="field">
               <label for="loginPassword">Password *</label>
+              <div class="password-field">
               <input
                 id="loginPassword"
                 type="password"
                 autocomplete="current-password"
                 required />
+                <button class="password-toggle" type="button" id="togglePksPassword" aria-label="Tampilkan password">👁</button>
+              </div>
             </div>
 
             <div
@@ -259,7 +262,7 @@ function openPksLogin() {
 
           <div class="modal-footer">
             <button
-              class="secondary-button"
+              class="cancel-login-button"
               type="button"
               id="cancelPksLogin">
               Batal
@@ -300,6 +303,23 @@ function openPksLogin() {
     }
   )
 
+  document.querySelector('#togglePksPassword')?.addEventListener('click', () => {
+    const input = document.querySelector('#loginPassword') as HTMLInputElement | null
+    const toggle = document.querySelector('#togglePksPassword') as HTMLButtonElement | null
+
+    if (!input || !toggle) return
+
+    if (input.type === 'password') {
+      input.type = 'text'
+      toggle.textContent = '🙈'
+      toggle.setAttribute('aria-label', 'Sembunyikan password')
+    } else {
+      input.type = 'password'
+      toggle.textContent = '👁'
+      toggle.setAttribute('aria-label', 'Tampilkan password')
+    }
+  })
+
   document.querySelector('#pksLoginForm')?.addEventListener('submit', async (event) => {
     event.preventDefault()
 
@@ -319,7 +339,7 @@ function openPksLogin() {
     }
 
     try {
-      await loginPks(email, password)
+      await loginDemoPks(email, password)
       close()
     } catch (loginError) {
       console.error('Login PKS gagal:', loginError)
@@ -345,7 +365,7 @@ function openModuleInfo(title: string, description: string, status: string) {
           '<p class="eyebrow">INFORMASI MODUL</p>' +
           '<h2>' + title + '</h2>' +
         '</div>' +
-        '<button class="close-button" type="button" id="closeModuleInfo" aria-label="Tutup">×</button>' +
+        '<button class="close-button" type="button" id="closeModuleInfo" aria-label="Tutup">Ã—</button>' +
       '</div>' +
       '<div style="padding:20px;">' +
         '<p style="margin:0 0 14px;line-height:1.7;color:#4b635d;">' + description + '</p>' +
@@ -435,7 +455,7 @@ function renderDashboard() {
 
   document.querySelector('#openAgenda')?.addEventListener('click', () => openModuleInfo('Agenda Tahunan Terprogram', 'Modul ini digunakan untuk mengelola program kerja tahunan berdasarkan wilayah dan divisi, termasuk jadwal, target, kendala, tindak lanjut, dan dokumentasi foto.', 'Akses modul tersedia setelah Login PKS.'))
 
-  document.querySelector('#openEventBase')?.addEventListener('click', () => openModuleInfo('Agenda Event Base', 'Modul ini disiapkan untuk pengelolaan kegiatan khusus berbasis event. Fitur lengkapnya akan tersedia pada workspace internal PKS.', 'Segera tersedia — Login PKS diperlukan untuk akses internal.'))
+  document.querySelector('#openEventBase')?.addEventListener('click', () => openModuleInfo('Agenda Event Base', 'Modul ini disiapkan untuk pengelolaan kegiatan khusus berbasis event. Fitur lengkapnya akan tersedia pada workspace internal PKS.', 'Segera tersedia â€” Login PKS diperlukan untuk akses internal.'))
 
   document.querySelector('#openAnnualReport')?.addEventListener('click', () => openModuleInfo('Laporan Tahunan', 'Modul ini digunakan untuk mengelola dan memantau laporan tahunan kegiatan jemaat berdasarkan data program kerja yang dikelola PKS.', 'Akses modul tersedia setelah Login PKS.'))
 }
@@ -501,9 +521,9 @@ function renderAgenda() {
           <strong>Template standar untuk seluruh wilayah & divisi</strong>
 
           <span>
-            Periode · Bulan · Program Kerja · Tujuan Pelaksanaan ·
-            Sasaran/Target · Estimasi Pencapaian · Minggu I–IV ·
-            Keterangan · Kendala · Tindak Lanjut · Dokumentasi Foto
+            Periode Â· Bulan Â· Program Kerja Â· Tujuan Pelaksanaan Â·
+            Sasaran/Target Â· Estimasi Pencapaian Â· Minggu Iâ€“IV Â·
+            Keterangan Â· Kendala Â· Tindak Lanjut Â· Dokumentasi Foto
           </span>
         </div>
 
@@ -589,7 +609,7 @@ function renderAgenda() {
                         <td>
                           ${
                             item.photos.length
-                              ? `<span class="photo-count">📷 ${item.photos.length} foto</span>`
+                              ? `<span class="photo-count">ðŸ“· ${item.photos.length} foto</span>`
                               : `<span class="muted">Belum ada</span>`
                           }
                         </td>
@@ -654,14 +674,14 @@ function renderAgenda() {
             class="export-button export-pdf-button"
             type="button"
             id="exportPdf">
-            📄 Export PDF
+            ðŸ“„ Export PDF
           </button>
 
           <button
             class="export-button export-ppt-button"
             type="button"
             id="exportPpt">
-            📊 Export PPT
+            ðŸ“Š Export PPT
           </button>
         </div>
       </section>
@@ -756,7 +776,7 @@ function openAgendaForm(id?: string) {
             type="button"
             id="closeAgendaModal"
             aria-label="Tutup">
-            ×
+            Ã—
           </button>
         </div>
 
@@ -1536,7 +1556,7 @@ async function exportPpt() {
     )
 
     slide.addText(
-      `${item.wilayah}  ·  ${item.divisi}  ·  ${item.tahun}  ·  ${item.bulan}`,
+      `${item.wilayah}  Â·  ${item.divisi}  Â·  ${item.tahun}  Â·  ${item.bulan}`,
       {
         x: 0.65,
         y: 1.15,
