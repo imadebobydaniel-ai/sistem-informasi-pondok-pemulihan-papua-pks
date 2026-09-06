@@ -904,3 +904,200 @@ h1 {
 .cancel-login-button:hover {
   background: #922f2c;
 }
+
+.eye-icon {
+  position: relative;
+  display: inline-block;
+  width: 16px;
+  height: 10px;
+  border: 1.6px solid currentColor;
+  border-radius: 50% / 65%;
+}
+
+.eye-icon::after {
+  content: '';
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translate(-50%, -50%);
+}
+
+/* =========================
+   WORKSPACE PKS
+   ========================= */
+
+.workspace-page {
+  width: min(1180px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 42px 0 70px;
+  flex: 1;
+}
+
+.workspace-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 28px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid #dfe8e3;
+}
+
+.workspace-heading h1 {
+  max-width: 850px;
+  margin: 0;
+  color: #06382f;
+  font-size: clamp(30px, 4vw, 44px);
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+}
+
+.workspace-heading .welcome-text {
+  max-width: 720px;
+  margin: 12px 0 0;
+  color: #64766f;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.workspace-heading .cancel-login-button {
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 18px;
+  background: #c92f2f;
+  color: #ffffff;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workspace-heading .cancel-login-button:hover {
+  background: #aa2525;
+}
+
+.workspace-identity {
+  margin-top: 26px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.workspace-identity > div {
+  min-width: 0;
+  padding: 17px 18px;
+  border: 1px solid #dfe8e3;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(16, 55, 42, 0.05);
+}
+
+.workspace-identity span {
+  display: block;
+  margin-bottom: 7px;
+  color: #718079;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.workspace-identity strong {
+  display: block;
+  color: #06382f;
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.workspace-modules {
+  margin-top: 30px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.workspace-modules .module-card {
+  min-width: 0;
+  min-height: 250px;
+  padding: 24px;
+  border-radius: 18px;
+}
+
+.workspace-modules .module-card h2 {
+  margin-top: 0;
+  line-height: 1.35;
+}
+
+.workspace-modules .module-card p {
+  flex: 1;
+  margin-top: 10px;
+  margin-bottom: 20px;
+}
+
+.workspace-modules .module-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 15px;
+  background: #06382f;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.workspace-modules .module-card:not(.module-card-active) .module-link {
+  background: #edf4f0;
+  color: #668078;
+  cursor: default;
+}
+
+@media (max-width: 900px) {
+  .workspace-identity {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-modules {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .workspace-page {
+    width: min(100% - 32px, 1180px);
+    padding: 30px 0 50px;
+  }
+
+  .workspace-heading {
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 18px;
+  }
+
+  .workspace-heading h1 {
+    font-size: clamp(28px, 8vw, 36px);
+  }
+
+  .workspace-heading .cancel-login-button {
+    justify-self: start;
+  }
+
+  .workspace-identity {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-modules {
+    gap: 14px;
+  }
+
+  .workspace-modules .module-card {
+    min-height: 0;
+  }
+}

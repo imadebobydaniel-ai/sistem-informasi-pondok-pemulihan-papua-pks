@@ -1,8 +1,17 @@
-import './style.css'
+﻿import './style.css'
 import logoIbn from './assets/logo-ibn.png'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { loginDemoPks } from './demoAuth'
+import { loginDemoPks, logoutDemoPks, getDemoPksSession } from './demoAuth'
+import { db } from './firebase'
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+} from 'firebase/firestore'
 
 type PhotoData = {
   id: string
@@ -31,25 +40,7 @@ type AgendaItem = {
   photos: PhotoData[]
 }
 
-const wilayah = ['Abepura', 'Sentani', 'Doyo', 'Arso 1', 'Arso 2']
 
-const divisi = [
-  'Praise and Worship (PW)',
-  'Multimedia & Sound Engineering',
-  'Tamborin and Banner',
-  'Event & Organizer',
-  'Komsel Bapak',
-  'Komsel Ibu',
-  'Komsel Pelajar',
-  'Komsel Mahasiswa',
-  'Komsel Profesi',
-  'Sekolah Minggu',
-  'Lansia',
-  'Team Doa',
-  'Team Misi',
-  'Perparkiran dan Keamanan',
-  'General Affairs',
-]
 
 const periode = [
   'Triwulan I',
@@ -73,44 +64,111 @@ const bulan = [
   'Desember',
 ]
 
-const STORAGE_KEY = 'sipapua-pks-agenda-terprogram-v1'
-const DIVISION_KEY = 'sipapua-pks-divisions-v1'
 
-let agendas: AgendaItem[] = loadAgendas()
-let divisions: string[] = loadDivisions()
+let agendas: AgendaItem[] = []
 let editingId: string | null = null
+let selectedAgendaIds = new Set<string>()
 
 const filters = {
-  wilayah: 'all',
-  divisi: 'all',
+  bulan: 'all',
   tahun: 'all',
 }
 
-function loadAgendas(): AgendaItem[] {
+
+async function loadAgendasFromFirestore() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) as AgendaItem[] : []
-  } catch {
-    return []
+    const profile = getDemoPksSession()
+    if (!profile) {
+      agendas = []
+      return
+    }
+
+    const snapshot = await getDocs(collection(db, 'agenda_tahunan'))
+
+    agendas = snapshot.docs
+      .map((snapshotDoc) => {
+        const data = snapshotDoc.data()
+
+        return {
+          id: snapshotDoc.id,
+          wilayah: String(data.wilayah ?? ''),
+          divisi: String(data.divisi ?? ''),
+          tahun: Number(data.tahun ?? new Date().getFullYear()),
+          periode: String(data.periode ?? 'Tahunan'),
+          bulan: String(data.bulan ?? ''),
+          programKerja: String(data.programKerja ?? data.nama ?? ''),
+          tujuanPelaksanaan: String(data.tujuanPelaksanaan ?? ''),
+          sasaranTarget: String(data.sasaranTarget ?? ''),
+          estimasiPencapaian: String(data.estimasiPencapaian ?? ''),
+          mingguI: String(data.mingguI ?? ''),
+          mingguII: String(data.mingguII ?? ''),
+          mingguIII: String(data.mingguIII ?? ''),
+          mingguIV: String(data.mingguIV ?? ''),
+          keterangan: String(data.keterangan ?? ''),
+          kendalaPelaksanaan: String(data.kendalaPelaksanaan ?? ''),
+          tindakLanjut: String(data.tindakLanjut ?? ''),
+          photos: Array.isArray(data.photos) ? data.photos : [],
+        } satisfies AgendaItem
+      })
+      .filter((item) => {
+        const source = snapshot.docs.find((docItem) => docItem.id === item.id)
+        const ownerUid = source?.data()?.ownerUid
+
+        return !ownerUid || ownerUid === profile.uid
+      })
+
+    agendas.sort((a, b) => {
+      if (b.tahun !== a.tahun) return b.tahun - a.tahun
+      const monthA = bulan.indexOf(a.bulan)
+      const monthB = bulan.indexOf(b.bulan)
+      if (monthA !== monthB) return monthA - monthB
+      return a.programKerja.localeCompare(b.programKerja)
+    })
+  } catch (error) {
+    console.error('Gagal memuat agenda dari Firestore:', error)
+    agendas = []
   }
 }
+async function saveAgendaToFirestore(item: AgendaItem) {
+  const profile = getDemoPksSession()
 
-function saveAgendas() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(agendas))
-}
-
-function loadDivisions(): string[] {
-  try {
-    const stored = JSON.parse(localStorage.getItem(DIVISION_KEY) || '[]') as string[]
-    return Array.from(new Set([...divisi, ...stored]))
-  } catch {
-    return [...divisi]
+  if (!profile) {
+    throw new Error('PKS_SESSION_NOT_FOUND')
   }
+
+  const agendaRef = doc(
+    db,
+    'agenda_tahunan',
+    item.id,
+  )
+
+  await setDoc(
+    agendaRef,
+    {
+      ...item,
+
+      ownerUid: profile.uid,
+      ownerEmail: profile.email,
+      ownerNama: profile.nama,
+
+      // Field kompatibilitas untuk Admin Portal lama.
+      nama: item.programKerja,
+      kategori: item.divisi,
+
+      updatedAt: serverTimestamp(),
+    },
+    {
+      merge: true,
+    },
+  )
 }
 
-function saveDivisions() {
-  localStorage.setItem(DIVISION_KEY, JSON.stringify(divisions))
+async function deleteAgendaFromFirestore(id: string) {
+  await deleteDoc(
+    doc(db, 'agenda_tahunan', id),
+  )
 }
+
 
 function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -126,9 +184,11 @@ function escapeHtml(value: unknown) {
 }
 
 function years() {
-  const set = new Set<number>([new Date().getFullYear()])
-  agendas.forEach((item) => set.add(item.tahun))
-  return [...set].sort((a, b) => b - a)
+  const currentYear = new Date().getFullYear()
+  return Array.from(
+    { length: 11 },
+    (_, index) => currentYear + index
+  )
 }
 
 function optionList(items: string[], selected: string, includeAll = false) {
@@ -145,8 +205,6 @@ function optionList(items: string[], selected: string, includeAll = false) {
 
 function filteredAgendas() {
   return agendas
-    .filter((item) => filters.wilayah === 'all' || item.wilayah === filters.wilayah)
-    .filter((item) => filters.divisi === 'all' || item.divisi === filters.divisi)
     .filter((item) => filters.tahun === 'all' || String(item.tahun) === filters.tahun)
     .sort((a, b) => {
       if (a.tahun !== b.tahun) return b.tahun - a.tahun
@@ -159,6 +217,9 @@ function filteredAgendas() {
 }
 
 function renderShell(content: string, showBackButton = false) {
+  const currentRoute = (window.location.hash || '#dashboard').replace(/^#/, '')
+  const backRoute = currentRoute === 'agenda' ? 'workspace' : 'dashboard'
+  const backLabel = currentRoute === 'agenda' ? 'Kembali ke Workspace' : 'Kembali ke Dashboard'
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app-shell">
       <header class="site-header">
@@ -179,16 +240,20 @@ function renderShell(content: string, showBackButton = false) {
               class="back-dashboard-button"
               type="button"
               id="backDashboard">
-              â† Kembali ke Portal Utama
+${backLabel}
             </button>
           ` : ''}
 
-          <button
-            class="login-button"
-            type="button"
-            id="loginButton">
-            Login PKS
-          </button>
+          ${!showBackButton ? `
+            <button
+              class="login-button"
+              type="button"
+              id="loginButton">
+              Login PKS
+            </button>
+          ` : ''}
+
+
         </div>
       </header>
 
@@ -196,7 +261,7 @@ function renderShell(content: string, showBackButton = false) {
 
       <footer class="site-footer">
         <span>SIPAPUA Portal PKS</span>
-        <span>Â© 2026 Pondok Pemulihan Papua</span>
+        <span>(C) 2026 Pondok Pemulihan Papua</span>
       </footer>
     </div>
   `
@@ -206,7 +271,7 @@ function renderShell(content: string, showBackButton = false) {
   })
 
   if (showBackButton) {
-    document.querySelector('#backDashboard')?.addEventListener('click', renderDashboard)
+    document.querySelector('#backDashboard')?.addEventListener('click', () => navigateTo(backRoute))
   }
 }
 
@@ -227,7 +292,7 @@ function openPksLogin() {
             type="button"
             id="closePksLogin"
             aria-label="Tutup">
-            Ã—
+            Tutup
           </button>
         </div>
 
@@ -245,19 +310,19 @@ function openPksLogin() {
             <div class="field">
               <label for="loginPassword">Password *</label>
               <div class="password-field">
-              <input
-                id="loginPassword"
-                type="password"
-                autocomplete="current-password"
-                required />
-                <button class="password-toggle" type="button" id="togglePksPassword" aria-label="Tampilkan password">👁</button>
+                <input
+                  id="loginPassword"
+                  type="password"
+                  autocomplete="current-password"
+                  required />
+                <button
+                  class="password-toggle"
+                  type="button"
+                  id="togglePksPassword"
+                  aria-label="Tampilkan password">
+                  <span class="eye-icon" aria-hidden="true"></span>
+                </button>
               </div>
-            </div>
-
-            <div
-              id="loginError"
-              style="display:none;margin-top:12px;padding:10px 12px;border-radius:8px;background:#fff1f0;color:#a33d38;font-size:12px;">
-            </div>
           </div>
 
           <div class="modal-footer">
@@ -311,11 +376,11 @@ function openPksLogin() {
 
     if (input.type === 'password') {
       input.type = 'text'
-      toggle.textContent = '🙈'
+      toggle.innerHTML = '<span class="eye-icon" aria-hidden="true"></span>'
       toggle.setAttribute('aria-label', 'Sembunyikan password')
     } else {
       input.type = 'password'
-      toggle.textContent = '👁'
+      toggle.innerHTML = '<span class="eye-icon" aria-hidden="true"></span>'
       toggle.setAttribute('aria-label', 'Tampilkan password')
     }
   })
@@ -341,6 +406,7 @@ function openPksLogin() {
     try {
       await loginDemoPks(email, password)
       close()
+      navigateTo('workspace')
     } catch (loginError) {
       console.error('Login PKS gagal:', loginError)
       if (error) {
@@ -365,7 +431,7 @@ function openModuleInfo(title: string, description: string, status: string) {
           '<p class="eyebrow">INFORMASI MODUL</p>' +
           '<h2>' + title + '</h2>' +
         '</div>' +
-        '<button class="close-button" type="button" id="closeModuleInfo" aria-label="Tutup">Ã—</button>' +
+        '<button class="close-button" type="button" id="closeModuleInfo" aria-label="Tutup">Tutup</button>' +
       '</div>' +
       '<div style="padding:20px;">' +
         '<p style="margin:0 0 14px;line-height:1.7;color:#4b635d;">' + description + '</p>' +
@@ -455,9 +521,66 @@ function renderDashboard() {
 
   document.querySelector('#openAgenda')?.addEventListener('click', () => openModuleInfo('Agenda Tahunan Terprogram', 'Modul ini digunakan untuk mengelola program kerja tahunan berdasarkan wilayah dan divisi, termasuk jadwal, target, kendala, tindak lanjut, dan dokumentasi foto.', 'Akses modul tersedia setelah Login PKS.'))
 
-  document.querySelector('#openEventBase')?.addEventListener('click', () => openModuleInfo('Agenda Event Base', 'Modul ini disiapkan untuk pengelolaan kegiatan khusus berbasis event. Fitur lengkapnya akan tersedia pada workspace internal PKS.', 'Segera tersedia â€” Login PKS diperlukan untuk akses internal.'))
+  document.querySelector('#openEventBase')?.addEventListener('click', () => openModuleInfo('Agenda Event Base', 'Modul ini disiapkan untuk pengelolaan kegiatan khusus berbasis event. Fitur lengkapnya akan tersedia pada workspace internal PKS.', 'Segera tersedia - Login PKS diperlukan untuk akses internal.'))
 
   document.querySelector('#openAnnualReport')?.addEventListener('click', () => openModuleInfo('Laporan Tahunan', 'Modul ini digunakan untuk mengelola dan memantau laporan tahunan kegiatan jemaat berdasarkan data program kerja yang dikelola PKS.', 'Akses modul tersedia setelah Login PKS.'))
+}
+
+function renderPksWorkspace() {
+  const profile=getDemoPksSession()
+  if (!profile) {
+    renderDashboard()
+    return
+  }
+
+  renderShell(`
+    <main class="workspace-page">
+      <section class="workspace-heading">
+        <div>
+          <p class="eyebrow">WORKSPACE PKS</p>
+          <h1>Selamat Datang, ${profile.nama}</h1>
+          <p class="welcome-text">Kelola program kerja sesuai wilayah dan divisi yang terdaftar pada akun Anda.</p>
+        </div>
+        <button class="cancel-login-button" type="button" id="logoutPksButton">Keluar</button>
+      </section>
+
+      <section class="workspace-identity">
+        <div><span>Wilayah</span><strong>${profile.wilayah}</strong></div>
+        <div><span>Divisi / Tim</span><strong>${profile.divisi}</strong></div>
+        <div><span>Komsel</span><strong>${profile.komsel}</strong></div>
+        <div><span>Jabatan</span><strong>${profile.jabatan}</strong></div>
+      </section>
+
+      <section class="workspace-modules">
+        <article class="module-card module-card-active">
+          <div class="module-icon">01</div>
+          <h2>Agenda Tahunan Terprogram</h2>
+          <p>Kelola program kerja, jadwal, target, kendala, tindak lanjut, dan dokumentasi foto untuk wilayah dan divisi Anda.</p>
+          <button class="module-link" type="button" id="openWorkspaceAgenda">Buka Modul</button>
+        </article>
+
+        <article class="module-card">
+          <div class="module-icon">02</div>
+          <h2>Agenda Event Base</h2>
+          <p>Ruang kerja untuk kegiatan khusus dan event insidental di luar program tahunan.</p>
+          <span class="module-link">Segera tersedia</span>
+        </article>
+
+        <article class="module-card">
+          <div class="module-icon">03</div>
+          <h2>Laporan Tahunan</h2>
+          <p>Ruang penyusunan laporan berdasarkan pelaksanaan program kerja dan dokumentasi kegiatan.</p>
+          <span class="module-link">Segera tersedia</span>
+        </article>
+      </section>
+    </main>
+  `, true)
+
+  document.querySelector("#openWorkspaceAgenda")?.addEventListener("click",()=>navigateTo("agenda"))
+  document.querySelector("#logoutPksButton")?.addEventListener("click",()=>{
+    logoutDemoPks()
+    navigateTo('dashboard')
+  })
 }
 
 function renderAgenda() {
@@ -487,24 +610,7 @@ function renderAgenda() {
 
       <section class="filter-panel">
         <div class="field">
-          <label for="filterWilayah">Wilayah</label>
-
-          <select id="filterWilayah">
-            ${optionList(wilayah, filters.wilayah, true)}
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="filterDivisi">Divisi / Tim</label>
-
-          <select id="filterDivisi">
-            ${optionList(divisions, filters.divisi, true)}
-          </select>
-        </div>
-
-        <div class="field">
           <label for="filterTahun">Tahun</label>
-
           <select id="filterTahun">
             ${optionList(years().map(String), filters.tahun, true)}
           </select>
@@ -512,7 +618,7 @@ function renderAgenda() {
 
         <div class="filter-info">
           <strong>${rows.length} program</strong>
-          <span>Data tersaring sesuai filter aktif.</span>
+          <span>Data tersaring berdasarkan tahun yang dipilih.</span>
         </div>
       </section>
 
@@ -521,29 +627,49 @@ function renderAgenda() {
           <strong>Template standar untuk seluruh wilayah & divisi</strong>
 
           <span>
-            Periode Â· Bulan Â· Program Kerja Â· Tujuan Pelaksanaan Â·
-            Sasaran/Target Â· Estimasi Pencapaian Â· Minggu Iâ€“IV Â·
-            Keterangan Â· Kendala Â· Tindak Lanjut Â· Dokumentasi Foto
+            Periode - Bulan - Program Kerja - Tujuan Pelaksanaan -
+            Sasaran/Target - Estimasi Pencapaian - Minggu I-IV -
+            Keterangan - Kendala - Tindak Lanjut - Dokumentasi Foto
           </span>
         </div>
 
-        <button
-          class="secondary-button"
-          type="button"
-          id="manageDivisions">
-          Kelola Divisi / Tim
-        </button>
       </section>
 
       <section class="table-card">
         ${
           rows.length
             ? `
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Wilayah</th>
+              <div class="table-toolbar">
+  <div class="selection-actions">
+    <label class="select-all-label">
+      <input type="checkbox" id="selectAllAgendas">
+      <span>Pilih Semua</span>
+    </label>
+
+    <button
+      class="icon-button danger"
+      type="button"
+      id="deleteSelectedAgendas">
+      Hapus Terpilih
+    </button>
+  </div>
+
+  <span class="selection-info">
+    ${selectedAgendaIds.size} program dipilih
+  </span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th class="selection-column">
+          <input
+            type="checkbox"
+            id="selectAllAgendasHeader"
+            aria-label="Pilih semua program">
+        </th>
+        <th>Wilayah</th>
                       <th>Divisi / Tim</th>
                       <th>Tahun</th>
                       <th>Periode</th>
@@ -567,7 +693,15 @@ function renderAgenda() {
                   <tbody>
                     ${rows.map((item) => `
                       <tr>
-                        <td>${escapeHtml(item.wilayah)}</td>
+  <td class="selection-column">
+    <input
+      type="checkbox"
+      class="agenda-select"
+      data-select-agenda="${item.id}"
+      ${selectedAgendaIds.has(item.id) ? 'checked' : ''}
+      aria-label="Pilih ${escapeHtml(item.programKerja)}">
+  </td>
+  <td>${escapeHtml(item.wilayah)}</td>
                         <td>${escapeHtml(item.divisi)}</td>
                         <td>${item.tahun}</td>
                         <td>${escapeHtml(item.periode)}</td>
@@ -609,7 +743,7 @@ function renderAgenda() {
                         <td>
                           ${
                             item.photos.length
-                              ? `<span class="photo-count">ðŸ“· ${item.photos.length} foto</span>`
+                              ? `<span class="photo-count">Foto: ${item.photos.length} foto</span>`
                               : `<span class="muted">Belum ada</span>`
                           }
                         </td>
@@ -674,14 +808,14 @@ function renderAgenda() {
             class="export-button export-pdf-button"
             type="button"
             id="exportPdf">
-            ðŸ“„ Export PDF
+            Export PDF
           </button>
 
           <button
             class="export-button export-ppt-button"
             type="button"
             id="exportPpt">
-            ðŸ“Š Export PPT
+            Export PPT
           </button>
         </div>
       </section>
@@ -698,10 +832,6 @@ function renderAgenda() {
     () => openAgendaForm()
   )
 
-  document.querySelector('#manageDivisions')?.addEventListener(
-    'click',
-    manageDivisions
-  )
 
   document.querySelector('#exportPdf')?.addEventListener(
     'click',
@@ -718,21 +848,6 @@ function renderAgenda() {
     exportCsv
   )
 
-  document.querySelector<HTMLSelectElement>('#filterWilayah')?.addEventListener(
-    'change',
-    (event) => {
-      filters.wilayah = (event.target as HTMLSelectElement).value
-      renderAgenda()
-    }
-  )
-
-  document.querySelector<HTMLSelectElement>('#filterDivisi')?.addEventListener(
-    'change',
-    (event) => {
-      filters.divisi = (event.target as HTMLSelectElement).value
-      renderAgenda()
-    }
-  )
 
   document.querySelector<HTMLSelectElement>('#filterTahun')?.addEventListener(
     'change',
@@ -742,6 +857,99 @@ function renderAgenda() {
     }
   )
 
+  const selectAllAgendas = document.querySelector<HTMLInputElement>('#selectAllAgendas')
+  const selectAllAgendasHeader = document.querySelector<HTMLInputElement>('#selectAllAgendasHeader')
+  const agendaCheckboxes = Array.from(
+    document.querySelectorAll<HTMLInputElement>('[data-select-agenda]')
+  )
+
+  const syncAgendaSelection = () => {
+    const visibleIds = agendaCheckboxes.map(
+      (checkbox) => checkbox.dataset.selectAgenda || ''
+    ).filter(Boolean)
+
+    const selectedVisibleCount = visibleIds.filter(
+      (id) => selectedAgendaIds.has(id)
+    ).length
+
+    const allSelected =
+      visibleIds.length > 0 &&
+      selectedVisibleCount === visibleIds.length
+
+    if (selectAllAgendas) {
+      selectAllAgendas.checked = allSelected
+      selectAllAgendas.indeterminate =
+        selectedVisibleCount > 0 && !allSelected
+    }
+
+    if (selectAllAgendasHeader) {
+      selectAllAgendasHeader.checked = allSelected
+      selectAllAgendasHeader.indeterminate =
+        selectedVisibleCount > 0 && !allSelected
+    }
+
+    const selectionInfo = document.querySelector<HTMLElement>('.selection-info')
+    if (selectionInfo) {
+      selectionInfo.textContent =
+        `${selectedAgendaIds.size} program dipilih`
+    }
+
+    const deleteButton =
+      document.querySelector<HTMLButtonElement>('#deleteSelectedAgendas')
+
+    if (deleteButton) {
+      deleteButton.disabled = selectedAgendaIds.size === 0
+    }
+  }
+
+  const setVisibleAgendaSelection = (checked: boolean) => {
+    agendaCheckboxes.forEach((checkbox) => {
+      const id = checkbox.dataset.selectAgenda
+      if (!id) return
+
+      checkbox.checked = checked
+
+      if (checked) {
+        selectedAgendaIds.add(id)
+      } else {
+        selectedAgendaIds.delete(id)
+      }
+    })
+
+    syncAgendaSelection()
+  }
+
+  selectAllAgendas?.addEventListener('change', (event) => {
+    setVisibleAgendaSelection(
+      (event.target as HTMLInputElement).checked
+    )
+  })
+
+  selectAllAgendasHeader?.addEventListener('change', (event) => {
+    setVisibleAgendaSelection(
+      (event.target as HTMLInputElement).checked
+    )
+  })
+
+  agendaCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const id = checkbox.dataset.selectAgenda
+      if (!id) return
+
+      if (checkbox.checked) {
+        selectedAgendaIds.add(id)
+      } else {
+        selectedAgendaIds.delete(id)
+      }
+
+      syncAgendaSelection()
+    })
+  })
+
+  document.querySelector<HTMLButtonElement>('#deleteSelectedAgendas')
+    ?.addEventListener('click', deleteSelectedAgendas)
+
+  syncAgendaSelection()
   document.querySelectorAll<HTMLElement>('[data-edit]').forEach((button) => {
     button.addEventListener('click', () => {
       openAgendaForm(button.dataset.edit)
@@ -776,7 +984,7 @@ function openAgendaForm(id?: string) {
             type="button"
             id="closeAgendaModal"
             aria-label="Tutup">
-            Ã—
+            Tutup
           </button>
         </div>
 
@@ -785,28 +993,6 @@ function openAgendaForm(id?: string) {
             <h3>Identitas Agenda</h3>
 
             <div class="form-grid form-grid-3">
-              <div class="field">
-                <label for="formWilayah">Wilayah *</label>
-
-                <select id="formWilayah" required>
-                  ${optionList(
-                    wilayah,
-                    existing?.wilayah || wilayah[0]
-                  )}
-                </select>
-              </div>
-
-              <div class="field">
-                <label for="formDivisi">Divisi / Tim *</label>
-
-                <select id="formDivisi" required>
-                  ${optionList(
-                    divisions,
-                    existing?.divisi || divisions[0]
-                  )}
-                </select>
-              </div>
-
               <div class="field">
                 <label for="formTahun">Tahun *</label>
 
@@ -1072,13 +1258,20 @@ function openAgendaForm(id?: string) {
 
   document.querySelector<HTMLFormElement>('#agendaForm')?.addEventListener(
     'submit',
-    (event) => {
+    async (event) => {
       event.preventDefault()
+
+      const profile = getDemoPksSession()
+
+      if (!profile) {
+        alert('Sesi PKS tidak ditemukan. Silakan login kembali.')
+        return
+      }
 
       const item: AgendaItem = {
         id: editingId || uid('agenda'),
-        wilayah: valueOf('formWilayah'),
-        divisi: valueOf('formDivisi'),
+        wilayah: profile.wilayah,
+        divisi: profile.divisi,
         tahun: Number(valueOf('formTahun')),
         periode: valueOf('formPeriode'),
         bulan: valueOf('formBulan'),
@@ -1106,10 +1299,8 @@ function openAgendaForm(id?: string) {
         agendas.push(item)
       }
 
-      saveAgendas()
+      await saveAgendaToFirestore(item)
 
-      filters.wilayah = item.wilayah
-      filters.divisi = item.divisi
       filters.tahun = String(item.tahun)
 
       closeAgendaModal()
@@ -1131,51 +1322,40 @@ function closeAgendaModal() {
   editingId = null
 }
 
-function deleteAgenda(id: string) {
-  const item = agendas.find((agenda) => agenda.id === id)
-
-  if (!item) return
-
-  const confirmed = confirm(
-    `Hapus program "${item.programKerja}" beserta dokumentasinya?`
-  )
+async function deleteAgenda(id: string) {
+  const confirmed = window.confirm('Apakah anda ingin menghapus data tersebut ?')
 
   if (!confirmed) return
 
-  agendas = agendas.filter((agenda) => agenda.id !== id)
-  saveAgendas()
-  renderAgenda()
+  try {
+    await deleteAgendaFromFirestore(id)
+    agendas = agendas.filter((item) => item.id !== id)
+    renderAgenda()
+  } catch (error) {
+    console.error('Gagal menghapus agenda:', error)
+    alert('Agenda gagal dihapus.')
+  }
 }
 
-function manageDivisions() {
-  const value = prompt(
-    'Masukkan daftar Divisi / Tim, satu nama per baris:',
-    divisions.join('\n')
-  )
+async function deleteSelectedAgendas() {
+  if (selectedAgendaIds.size === 0) return
 
-  if (value === null) return
+  const confirmed = window.confirm('Apakah anda ingin menghapus data tersebut ?')
 
-  const next = value
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .filter(Boolean)
+  if (!confirmed) return
 
-  if (!next.length) {
-    alert('Minimal harus ada satu Divisi / Tim.')
-    return
+  const ids = Array.from(selectedAgendaIds)
+
+  try {
+    await Promise.all(ids.map((id) => deleteAgendaFromFirestore(id)))
+
+    agendas = agendas.filter((item) => !selectedAgendaIds.has(item.id))
+    selectedAgendaIds.clear()
+    renderAgenda()
+  } catch (error) {
+    console.error('Gagal menghapus agenda terpilih:', error)
+    alert('Sebagian agenda gagal dihapus.')
   }
-
-  divisions = Array.from(new Set(next))
-  saveDivisions()
-
-  if (
-    filters.divisi !== 'all' &&
-    !divisions.includes(filters.divisi)
-  ) {
-    filters.divisi = 'all'
-  }
-
-  renderAgenda()
 }
 
 function compressImage(file: File): Promise<string> {
@@ -1268,12 +1448,6 @@ async function exportPpt() {
   const TEXT = '315F55'
   const MUTED = '718981'
 
-  const wilayahLabel =
-    filters.wilayah === 'all' ? 'Semua Wilayah' : filters.wilayah
-
-  const divisiLabel =
-    filters.divisi === 'all' ? 'Semua Divisi / Tim' : filters.divisi
-
   const tahunLabel =
     filters.tahun === 'all' ? 'Semua Tahun' : filters.tahun
 
@@ -1363,11 +1537,7 @@ async function exportPpt() {
     })
 
     slide.addText([
-      { text: 'Wilayah  ', options: { bold: true, color: GREEN } },
-      { text: wilayahLabel },
-      { text: '\nDivisi / Tim  ', options: { bold: true, color: GREEN } },
-      { text: divisiLabel },
-      { text: '\nTahun  ', options: { bold: true, color: GREEN } },
+      { text: 'Tahun  ', options: { bold: true, color: GREEN } },
       { text: tahunLabel },
     ], {
       x: 3.65,
@@ -1403,17 +1573,8 @@ async function exportPpt() {
       margin: 0,
     })
 
-    slide.addText(`Wilayah: ${wilayahLabel}`, {
-      x: 0.65,
-      y: 1.15,
-      w: 5.8,
-      h: 0.3,
-      fontSize: 12,
-      color: TEXT,
-      margin: 0,
-    })
 
-    slide.addText(`Divisi / Tim: ${divisiLabel}`, {
+    slide.addText(`Tahun: ${tahunLabel}`, {
       x: 0.65,
       y: 1.55,
       w: 5.8,
@@ -1556,7 +1717,7 @@ async function exportPpt() {
     )
 
     slide.addText(
-      `${item.wilayah}  Â·  ${item.divisi}  Â·  ${item.tahun}  Â·  ${item.bulan}`,
+      `${item.wilayah} - ${item.divisi} - ${item.tahun} - ${item.bulan}`,
       {
         x: 0.65,
         y: 1.15,
@@ -1732,14 +1893,6 @@ function exportPdf() {
     format: 'a4',
   })
 
-  const wilayahLabel = filters.wilayah === 'all'
-    ? 'Semua Wilayah'
-    : filters.wilayah
-
-  const divisiLabel = filters.divisi === 'all'
-    ? 'Semua Divisi / Tim'
-    : filters.divisi
-
   const tahunLabel = filters.tahun === 'all'
     ? 'Semua Tahun'
     : filters.tahun
@@ -1751,7 +1904,7 @@ function exportPdf() {
   pdf.setFontSize(9)
   pdf.setFont('helvetica', 'normal')
   pdf.text(
-    `Wilayah: ${wilayahLabel} | Divisi / Tim: ${divisiLabel} | Tahun: ${tahunLabel}`,
+    `Tahun: ${tahunLabel}`,
     14,
     22,
   )
@@ -1915,4 +2068,50 @@ function exportCsv() {
   URL.revokeObjectURL(url)
 }
 
-renderDashboard()
+function navigateTo(route:string) {
+  const normalized=route.replace(/^#/, '') || 'dashboard'
+  window.location.hash=normalized
+}
+
+function requirePksSession():boolean {
+  if (getDemoPksSession()) return true
+
+  navigateTo('dashboard')
+  setTimeout(() => openPksLogin(), 0)
+  return false
+}
+
+function handleRoute() {
+  const route=(window.location.hash || '#dashboard').replace(/^#/, '')
+
+  if (route === 'workspace') {
+    if (!requirePksSession()) return
+    renderPksWorkspace()
+    return
+  }
+
+  if (route === 'agenda') {
+    if (!requirePksSession()) return
+
+    loadAgendasFromFirestore().finally(() => {
+      renderAgenda()
+    })
+
+    return
+  }
+
+  if (route === 'dashboard') {
+    renderDashboard()
+    return
+  }
+
+  navigateTo('dashboard')
+}
+
+window.addEventListener('hashchange', handleRoute)
+
+if (!window.location.hash) {
+  navigateTo('dashboard')
+} else {
+  handleRoute()
+}
