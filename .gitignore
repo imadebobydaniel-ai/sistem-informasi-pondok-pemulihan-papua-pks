@@ -1,4 +1,4 @@
-# Logs
+﻿# Logs
 logs
 *.log
 npm-debug.log*
@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+.env.*
+
+# Supabase local environment
+.env
+.env.*
+!.env.example
+
+scripts/pks-accounts.local.md
+scripts/pks-provision.env

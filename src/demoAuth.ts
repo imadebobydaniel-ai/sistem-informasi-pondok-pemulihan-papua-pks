@@ -1,36 +1,11 @@
-﻿const DEMO_STORAGE_KEY = 'sipapua-pks-demo-session-v1'
+﻿import { supabase } from './supabase'
 
-const WILAYAH = [
-  'Abepura',
-  'Sentani',
-  'Doyo',
-  'Arso 1',
-  'Arso 2',
-]
-
-const DIVISI = [
-  'Praise and Worship (PW)',
-  'Multimedia & Sound Engineering',
-  'Tamborin and Banner',
-  'Event & Organizer',
-  'Komsel Bapak',
-  'Komsel Ibu',
-  'Komsel Pelajar',
-  'Komsel Mahasiswa',
-  'Komsel Profesi',
-  'Sekolah Minggu',
-  'Lansia',
-  'Team Doa',
-  'Team Misi',
-  'Perparkiran dan Keamanan',
-  'General Affairs',
-]
+const DEMO_STORAGE_KEY = 'sipapua-pks-demo-session-v2'
 
 export type DemoPksProfile = {
   uid: string
   nama: string
   email: string
-  password: string
   wilayah: string
   divisi: string
   komsel: string
@@ -39,54 +14,66 @@ export type DemoPksProfile = {
   status: 'active'
 }
 
-function slug(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '.')
-    .replace(/^\.+|\.+$/g, '')
-}
-
-export const DEMO_PKS_ACCOUNTS: DemoPksProfile[] = WILAYAH.flatMap(
-  (wilayah, wilayahIndex) =>
-    DIVISI.map((divisi, divisiIndex) => {
-      const number = wilayahIndex * DIVISI.length + divisiIndex + 1
-
-      return {
-        uid: `demo-pks-${String(number).padStart(3, '0')}`,
-        nama: `PKS ${wilayah} - ${divisi}`,
-        email: `pks.${slug(wilayah)}.${slug(divisi)}@demo.sipapua.local`,
-        password: `DemoPKS-${String(number).padStart(3, '0')}-2026!`,
-        wilayah,
-        divisi,
-        komsel: 'Demo',
-        jabatan: 'PKS',
-        role: 'pks',
-        status: 'active',
-      }
-    }),
-)
-
 export async function loginDemoPks(
   email: string,
   password: string,
 ) {
-  const account = DEMO_PKS_ACCOUNTS.find(
-    (item) =>
-      item.email === email.trim().toLowerCase()
-      && item.password === password,
-  )
+  const normalizedEmail = email.trim().toLowerCase()
 
-  if (!account) {
-    throw new Error('DEMO_INVALID_CREDENTIALS')
+  if (!normalizedEmail || !password) {
+    throw new Error('AUTH_INVALID_CREDENTIALS')
   }
 
-  const profile = { ...account }
+  const { data: authData, error: authError } =
+    await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    })
+
+  if (authError || !authData.user) {
+    throw new Error(
+      authError?.message || 'AUTH_INVALID_CREDENTIALS',
+    )
+  }
+
+  const { data: profile, error: profileError } =
+    await supabase
+      .from('pks_profiles')
+      .select(
+        'id,nama,email,wilayah,divisi,komsel,jabatan,role,status',
+      )
+      .eq('id', authData.user.id)
+      .eq('status', 'active')
+      .single()
+
+  if (profileError || !profile) {
+    await supabase.auth.signOut()
+    throw new Error('PKS_PROFILE_NOT_FOUND')
+  }
+
+  if (profile.role !== 'pks') {
+    await supabase.auth.signOut()
+    throw new Error('PKS_ROLE_INVALID')
+  }
+
+  const sessionProfile: DemoPksProfile = {
+    uid: profile.id,
+    nama: profile.nama,
+    email: profile.email,
+    wilayah: profile.wilayah,
+    divisi: profile.divisi,
+    komsel: profile.komsel,
+    jabatan: profile.jabatan,
+    role: profile.role,
+    status: profile.status,
+  }
+
   sessionStorage.setItem(
     DEMO_STORAGE_KEY,
-    JSON.stringify(profile),
+    JSON.stringify(sessionProfile),
   )
 
-  return profile
+  return sessionProfile
 }
 
 export function getDemoPksSession(): DemoPksProfile | null {
@@ -104,6 +91,7 @@ export function getDemoPksSession(): DemoPksProfile | null {
   }
 }
 
-export function logoutDemoPks() {
+export async function logoutDemoPks() {
   sessionStorage.removeItem(DEMO_STORAGE_KEY)
+  await supabase.auth.signOut()
 }

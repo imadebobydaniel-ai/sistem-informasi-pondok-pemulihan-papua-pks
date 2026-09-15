@@ -1,24 +1,34 @@
-﻿import './style.css'
+import './style.css'
 import logoIbn from './assets/logo-ibn.png'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { loginDemoPks, logoutDemoPks, getDemoPksSession } from './demoAuth'
-import { db } from './firebase'
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  serverTimestamp,
-  setDoc,
-} from 'firebase/firestore'
-
+import { listMyEvents, createEvent, updateEvent, deleteEvent } from './eventService'
+import { listMyAgendas, createAgenda, updateAgenda, deleteAgenda as deleteAgendaSupabase } from './agendaService'
+import { listMyAnnualActivities, createAnnualActivity, updateAnnualActivity, deleteAnnualActivity } from './annualActivityService'
 type PhotoData = {
   id: string
   name: string
   dataUrl: string
 }
 
+type EventJemaatItem = {
+  id: string
+  nama: string
+  lokasi: string
+  tgl: string
+  isi: string
+  fotos: string[]
+  createdBy: string
+  createdAt: string
+  wilayah: string
+  divisi: string
+  komsel: string
+  jabatan: string
+  ownerUid: string
+  ownerEmail: string
+  ownerNama: string
+}
 type AgendaItem = {
   id: string
   wilayah: string
@@ -65,6 +75,107 @@ const bulan = [
 ]
 
 
+let eventsJemaat: EventJemaatItem[] = []
+
+type AnnualActivityItem = {
+  id: string
+  wilayah: string
+  divisi: string
+  namaKegiatan: string
+  tanggalKegiatan: string
+  tahunKegiatan: number
+  lokasiKegiatan: string
+  agendaKegiatan: string
+  keterangan: string
+  photos: PhotoData[]
+}
+
+let annualActivities: AnnualActivityItem[] = []
+let editingAnnualActivityId: string | null = null
+let editingEventId: string | null = null
+
+async function loadEventsJemaat() {
+  try {
+    const profile = getDemoPksSession()
+
+    if (!profile) {
+      eventsJemaat = []
+      return
+    }
+
+    const items = await listMyEvents(profile)
+
+    eventsJemaat = items.map(({ event, photos }) => ({
+      id: event.id,
+      nama: event.nama,
+      lokasi: event.lokasi ?? '',
+      tgl: event.tanggal,
+      isi: event.isi ?? '',
+      fotos: photos
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map((photo) => photo.url),
+      createdBy: profile.nama,
+      createdAt: event.created_at,
+      wilayah: profile.wilayah,
+      divisi: profile.divisi,
+      komsel: profile.komsel,
+      jabatan: profile.jabatan,
+      ownerUid: event.owner_id,
+      ownerEmail: profile.email,
+      ownerNama: profile.nama,
+    }))
+  } catch (error) {
+    console.error('Gagal memuat Event Jemaat:', error)
+    eventsJemaat = []
+  }
+}
+
+async function saveEventJemaat(
+  input: Omit<EventJemaatItem, 'id'>
+) {
+  const profile = getDemoPksSession()
+
+  if (!profile) {
+    throw new Error('Sesi PKS tidak ditemukan.')
+  }
+
+  return createEvent(profile, {
+    nama: input.nama,
+    lokasi: input.lokasi,
+    tgl: input.tgl,
+    isi: input.isi,
+    fotos: input.fotos,
+  })
+}
+
+async function updateEventJemaat(
+  eventId: string,
+  input: Pick<EventJemaatItem, 'nama' | 'lokasi' | 'tgl' | 'isi' | 'fotos'>
+) {
+  const profile = getDemoPksSession()
+
+  if (!profile) {
+    throw new Error('Sesi PKS tidak ditemukan.')
+  }
+
+  return updateEvent(profile, eventId, {
+    nama: input.nama,
+    lokasi: input.lokasi,
+    tgl: input.tgl,
+    isi: input.isi,
+    fotos: input.fotos,
+  })
+}
+
+async function deleteEventJemaat(eventId: string) {
+  const profile = getDemoPksSession()
+
+  if (!profile) {
+    throw new Error('Sesi PKS tidak ditemukan.')
+  }
+
+  await deleteEvent(profile, eventId)
+}
 let agendas: AgendaItem[] = []
 let editingId: string | null = null
 let selectedAgendaIds = new Set<string>()
@@ -75,98 +186,85 @@ const filters = {
 }
 
 
-async function loadAgendasFromFirestore() {
+async function loadAgendasFromSupabase() {
   try {
     const profile = getDemoPksSession()
+
     if (!profile) {
       agendas = []
       return
     }
 
-    const snapshot = await getDocs(collection(db, 'agenda_tahunan'))
+    const result = await listMyAgendas(profile)
 
-    agendas = snapshot.docs
-      .map((snapshotDoc) => {
-        const data = snapshotDoc.data()
-
-        return {
-          id: snapshotDoc.id,
-          wilayah: String(data.wilayah ?? ''),
-          divisi: String(data.divisi ?? ''),
-          tahun: Number(data.tahun ?? new Date().getFullYear()),
-          periode: String(data.periode ?? 'Tahunan'),
-          bulan: String(data.bulan ?? ''),
-          programKerja: String(data.programKerja ?? data.nama ?? ''),
-          tujuanPelaksanaan: String(data.tujuanPelaksanaan ?? ''),
-          sasaranTarget: String(data.sasaranTarget ?? ''),
-          estimasiPencapaian: String(data.estimasiPencapaian ?? ''),
-          mingguI: String(data.mingguI ?? ''),
-          mingguII: String(data.mingguII ?? ''),
-          mingguIII: String(data.mingguIII ?? ''),
-          mingguIV: String(data.mingguIV ?? ''),
-          keterangan: String(data.keterangan ?? ''),
-          kendalaPelaksanaan: String(data.kendalaPelaksanaan ?? ''),
-          tindakLanjut: String(data.tindakLanjut ?? ''),
-          photos: Array.isArray(data.photos) ? data.photos : [],
-        } satisfies AgendaItem
-      })
-      .filter((item) => {
-        const source = snapshot.docs.find((docItem) => docItem.id === item.id)
-        const ownerUid = source?.data()?.ownerUid
-
-        return !ownerUid || ownerUid === profile.uid
-      })
-
-    agendas.sort((a, b) => {
-      if (b.tahun !== a.tahun) return b.tahun - a.tahun
-      const monthA = bulan.indexOf(a.bulan)
-      const monthB = bulan.indexOf(b.bulan)
-      if (monthA !== monthB) return monthA - monthB
-      return a.programKerja.localeCompare(b.programKerja)
-    })
+    agendas = result.map(({ agenda, photos }) => ({
+      id: agenda.id,
+      wilayah: agenda.wilayah,
+      divisi: agenda.divisi,
+      tahun: agenda.tahun,
+      periode: agenda.periode,
+      bulan: agenda.bulan,
+      programKerja: agenda.program_kerja,
+      tujuanPelaksanaan: agenda.tujuan_pelaksanaan,
+      sasaranTarget: agenda.sasaran_target,
+      estimasiPencapaian: agenda.estimasi_pencapaian ?? '',
+      mingguI: agenda.minggu_i ?? '',
+      mingguII: agenda.minggu_ii ?? '',
+      mingguIII: agenda.minggu_iii ?? '',
+      mingguIV: agenda.minggu_iv ?? '',
+      keterangan: agenda.keterangan ?? '',
+      kendalaPelaksanaan: agenda.kendala_pelaksanaan ?? '',
+      tindakLanjut: agenda.tindak_lanjut ?? '',
+      photos: photos.map((photo) => ({
+        id: photo.id,
+        name: photo.caption || `Foto ${photo.sort_order}`,
+        dataUrl: photo.url,
+      })),
+    } satisfies AgendaItem))
   } catch (error) {
-    console.error('Gagal memuat agenda dari Firestore:', error)
+    console.error('Gagal memuat agenda dari Supabase:', error)
     agendas = []
   }
 }
-async function saveAgendaToFirestore(item: AgendaItem) {
+async function saveAgendaToSupabase(item: AgendaItem) {
   const profile = getDemoPksSession()
 
   if (!profile) {
     throw new Error('PKS_SESSION_NOT_FOUND')
   }
 
-  const agendaRef = doc(
-    db,
-    'agenda_tahunan',
-    item.id,
-  )
+  const input = {
+    tahun: item.tahun,
+    periode: item.periode,
+    bulan: item.bulan,
+    programKerja: item.programKerja,
+    tujuanPelaksanaan: item.tujuanPelaksanaan,
+    sasaranTarget: item.sasaranTarget,
+    estimasiPencapaian: item.estimasiPencapaian,
+    mingguI: item.mingguI,
+    mingguII: item.mingguII,
+    mingguIII: item.mingguIII,
+    mingguIV: item.mingguIV,
+    keterangan: item.keterangan,
+    kendalaPelaksanaan: item.kendalaPelaksanaan,
+    tindakLanjut: item.tindakLanjut,
+    photos: item.photos.map((photo) => photo.dataUrl),
+  }
 
-  await setDoc(
-    agendaRef,
-    {
-      ...item,
-
-      ownerUid: profile.uid,
-      ownerEmail: profile.email,
-      ownerNama: profile.nama,
-
-      // Field kompatibilitas untuk Admin Portal lama.
-      nama: item.programKerja,
-      kategori: item.divisi,
-
-      updatedAt: serverTimestamp(),
-    },
-    {
-      merge: true,
-    },
-  )
+  if (editingId) {
+    await updateAgenda(profile, item.id, input)
+  } else {
+    await createAgenda(profile, input)
+  }
 }
+async function deleteAgendaFromSupabase(id: string) {
+  const profile = getDemoPksSession()
 
-async function deleteAgendaFromFirestore(id: string) {
-  await deleteDoc(
-    doc(db, 'agenda_tahunan', id),
-  )
+  if (!profile) {
+    throw new Error('PKS_SESSION_NOT_FOUND')
+  }
+
+  await deleteAgendaSupabase(profile, id)
 }
 
 
@@ -216,10 +314,8 @@ function filteredAgendas() {
     })
 }
 
-function renderShell(content: string, showBackButton = false) {
+function renderShell(content: string) {
   const currentRoute = (window.location.hash || '#dashboard').replace(/^#/, '')
-  const backRoute = currentRoute === 'agenda' ? 'workspace' : 'dashboard'
-  const backLabel = currentRoute === 'agenda' ? 'Kembali ke Workspace' : 'Kembali ke Dashboard'
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app-shell">
       <header class="site-header">
@@ -235,25 +331,12 @@ function renderShell(content: string, showBackButton = false) {
         </div>
 
         <div class="header-actions">
-          ${showBackButton ? `
-            <button
-              class="back-dashboard-button"
-              type="button"
-              id="backDashboard">
-${backLabel}
-            </button>
-          ` : ''}
-
-          ${!showBackButton ? `
-            <button
-              class="login-button"
-              type="button"
-              id="loginButton">
-              Login PKS
-            </button>
-          ` : ''}
-
-
+          ${currentRoute === "workspace" ? `
+            <button class="cancel-login-button" type="button" id="logoutPksButton">Keluar</button>
+          ` : ""}
+          ${currentRoute === "dashboard" ? `
+            <button class="login-button" type="button" id="loginButton">Login PKS</button>
+          ` : ""}
         </div>
       </header>
 
@@ -270,9 +353,6 @@ ${backLabel}
     openPksLogin()
   })
 
-  if (showBackButton) {
-    document.querySelector('#backDashboard')?.addEventListener('click', () => navigateTo(backRoute))
-  }
 }
 
 function openPksLogin() {
@@ -280,7 +360,7 @@ function openPksLogin() {
 
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal-backdrop" id="pksLoginModal">
-      <div class="modal" style="max-width:460px;">
+      <div class="modal" style="width:min(100%,460px);max-width:460px;max-height:calc(100vh - 40px);overflow:hidden;">
         <div class="modal-header">
           <div>
             <p class="eyebrow">PORTAL INTERNAL</p>
@@ -292,11 +372,11 @@ function openPksLogin() {
             type="button"
             id="closePksLogin"
             aria-label="Tutup">
-            Tutup
+            &times;
           </button>
         </div>
 
-        <form id="pksLoginForm" style="padding:20px;">
+        <form id="pksLoginForm" style="padding:20px;box-sizing:border-box;width:100%;">
           <div class="form-section">
             <div class="field">
               <label for="loginEmail">Email *</label>
@@ -323,6 +403,7 @@ function openPksLogin() {
                   <span class="eye-icon" aria-hidden="true"></span>
                 </button>
               </div>
+            </div>
           </div>
 
           <div class="modal-footer">
@@ -343,6 +424,7 @@ function openPksLogin() {
         </form>
       </div>
     </div>
+
   `)
 
   const close = () => {
@@ -505,12 +587,12 @@ function renderDashboard() {
           <span class="module-link">Baca</span>
         </article>
 
-        <article class="module-card" id="openAnnualReport">
+        <article class="module-card" id="openAnnualActivity">
           <div class="module-icon">03</div>
-          <h2>Laporan Tahunan</h2>
+          <h2>Kegiatan Tahunan</h2>
 
           <p>
-            Modul untuk menyusun, memantau, dan menyiapkan laporan tahunan berdasarkan pelaksanaan program kerja, hasil kegiatan, kendala, tindak lanjut, serta dokumentasi yang telah dikumpulkan.
+            Modul untuk menyusun dan mengelola kegiatan tahunan berdasarkan nama kegiatan, tanggal, lokasi, agenda, keterangan, serta dokumentasi foto.
           </p>
 
           <span class="module-link">Baca</span>
@@ -523,7 +605,7 @@ function renderDashboard() {
 
   document.querySelector('#openEventBase')?.addEventListener('click', () => openModuleInfo('Agenda Event Base', 'Modul ini disiapkan untuk pengelolaan kegiatan khusus berbasis event. Fitur lengkapnya akan tersedia pada workspace internal PKS.', 'Segera tersedia - Login PKS diperlukan untuk akses internal.'))
 
-  document.querySelector('#openAnnualReport')?.addEventListener('click', () => openModuleInfo('Laporan Tahunan', 'Modul ini digunakan untuk mengelola dan memantau laporan tahunan kegiatan jemaat berdasarkan data program kerja yang dikelola PKS.', 'Akses modul tersedia setelah Login PKS.'))
+  document.querySelector('#openAnnualActivity')?.addEventListener('click', () => openModuleInfo('Kegiatan Tahunan', 'Modul ini digunakan untuk mengelola dan memantau kegiatan tahunan jemaat berdasarkan data kegiatan yang dikelola PKS.', 'Akses modul tersedia setelah Login PKS.'))
 }
 
 function renderPksWorkspace() {
@@ -541,7 +623,6 @@ function renderPksWorkspace() {
           <h1>Selamat Datang, ${profile.nama}</h1>
           <p class="welcome-text">Kelola program kerja sesuai wilayah dan divisi yang terdaftar pada akun Anda.</p>
         </div>
-        <button class="cancel-login-button" type="button" id="logoutPksButton">Keluar</button>
       </section>
 
       <section class="workspace-identity">
@@ -554,35 +635,1124 @@ function renderPksWorkspace() {
       <section class="workspace-modules">
         <article class="module-card module-card-active">
           <div class="module-icon">01</div>
-          <h2>Agenda Tahunan Terprogram</h2>
+          <h2>Program Tahunan Terprogram</h2>
           <p>Kelola program kerja, jadwal, target, kendala, tindak lanjut, dan dokumentasi foto untuk wilayah dan divisi Anda.</p>
           <button class="module-link" type="button" id="openWorkspaceAgenda">Buka Modul</button>
         </article>
 
         <article class="module-card">
           <div class="module-icon">02</div>
-          <h2>Agenda Event Base</h2>
-          <p>Ruang kerja untuk kegiatan khusus dan event insidental di luar program tahunan.</p>
-          <span class="module-link">Segera tersedia</span>
+          <h2>Event Jemaat</h2>
+          <p>Kelola informasi kegiatan jemaat berdasarkan wilayah dan divisi akun Anda untuk ditampilkan pada halaman Event Jemaat.</p>
+          <button class="module-link" type="button" id="openWorkspaceEventJemaat">Buka Modul</button>
         </article>
 
         <article class="module-card">
           <div class="module-icon">03</div>
-          <h2>Laporan Tahunan</h2>
-          <p>Ruang penyusunan laporan berdasarkan pelaksanaan program kerja dan dokumentasi kegiatan.</p>
-          <span class="module-link">Segera tersedia</span>
+          <h2>Kegiatan Tahunan</h2>
+          <p>Kelola kegiatan tahunan berdasarkan nama kegiatan, tanggal, lokasi, agenda, keterangan, dan dokumentasi foto.</p>
+          <button class="module-link" type="button" id="openWorkspaceAnnualActivity">Buka Modul</button>
         </article>
       </section>
     </main>
-  `, true)
+  `)
 
   document.querySelector("#openWorkspaceAgenda")?.addEventListener("click",()=>navigateTo("agenda"))
+  document.querySelector("#openWorkspaceEventJemaat")?.addEventListener("click",()=>navigateTo("event-jemaat"))
+  document.querySelector("#openWorkspaceAnnualActivity")?.addEventListener("click",()=>navigateTo("annual-report"))
   document.querySelector("#logoutPksButton")?.addEventListener("click",()=>{
     logoutDemoPks()
+
     navigateTo('dashboard')
   })
 }
 
+async function loadAnnualActivitiesFromSupabase() {
+  try {
+    const profile = getDemoPksSession()
+
+    if (!profile) {
+      annualActivities = []
+      return
+    }
+
+    const items = await listMyAnnualActivities(profile)
+
+    annualActivities = items.map(({ activity, photos }) => ({
+      id: activity.id,
+      wilayah: activity.wilayah,
+      divisi: activity.divisi,
+      namaKegiatan: activity.nama_kegiatan,
+      tanggalKegiatan: activity.tanggal_kegiatan,
+      tahunKegiatan: activity.tahun_kegiatan,
+      lokasiKegiatan: activity.lokasi_kegiatan,
+      agendaKegiatan: activity.agenda_kegiatan,
+      keterangan: activity.keterangan ?? '',
+      photos: photos.map((photo) => ({
+        id: photo.id,
+        name: photo.caption || `Foto ${photo.sort_order}`,
+        dataUrl: photo.url,
+      })),
+    }))
+  } catch (error) {
+    console.error('Gagal memuat Kegiatan Tahunan:', error)
+    annualActivities = []
+  }
+}
+
+async function saveAnnualActivityToSupabase(item: AnnualActivityItem) {
+  const profile = getDemoPksSession()
+
+  if (!profile) {
+    throw new Error('PKS_SESSION_NOT_FOUND')
+  }
+
+  const input = {
+    namaKegiatan: item.namaKegiatan,
+    tanggalKegiatan: item.tanggalKegiatan,
+    tahunKegiatan: item.tahunKegiatan,
+    lokasiKegiatan: item.lokasiKegiatan,
+    agendaKegiatan: item.agendaKegiatan,
+    keterangan: item.keterangan,
+    photos: item.photos.map((photo) => photo.dataUrl),
+  }
+
+  if (editingAnnualActivityId) {
+    await updateAnnualActivity(profile, item.id, input)
+  } else {
+    await createAnnualActivity(profile, input)
+  }
+}
+
+function renderAnnualActivity() {
+  const profile = getDemoPksSession()
+
+  if (!profile) {
+    renderDashboard()
+    return
+  }
+
+  const rows = annualActivities
+
+  renderShell(`
+    <main class="agenda-page">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">MODUL 03</p>
+          <h1>Kegiatan Tahunan</h1>
+          <p>
+            Kelola kegiatan tahunan untuk ${profile.wilayah} - ${profile.divisi}.
+          </p>
+        </div>
+
+        <div class="page-heading-actions">
+          <button
+            class="secondary-button"
+            type="button"
+            id="backAnnualActivity">
+            &#8592; Kembali
+          </button>
+
+          <button
+            class="primary-button"
+            type="button"
+            id="addAnnualActivity">
+            + Tambah Kegiatan
+          </button>
+        </div>
+      </section>
+
+      <section class="workspace-identity">
+        <div><span>Wilayah</span><strong>${escapeHtml(profile.wilayah)}</strong></div>
+        <div><span>Divisi / Tim</span><strong>${escapeHtml(profile.divisi)}</strong></div>
+        <div><span>Komsel</span><strong>${escapeHtml(profile.komsel)}</strong></div>
+        <div><span>Jumlah Kegiatan</span><strong>${rows.length}</strong></div>
+      </section>
+
+      <section class="table-card">
+        ${
+          rows.length
+            ? `
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>NAMA KEGIATAN</th>
+                      <th>TANGGAL</th>
+                      <th>TAHUN</th>
+                      <th>LOKASI</th>
+                      <th>AGENDA KEGIATAN</th>
+                      <th>KETERANGAN</th>
+                      <th>AKSI</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows.map((item) => `
+                      <tr>
+                        <td><strong>${escapeHtml(item.namaKegiatan)}</strong></td>
+                        <td>${escapeHtml(item.tanggalKegiatan)}</td>
+                        <td>${escapeHtml(item.tahunKegiatan)}</td>
+                        <td>${escapeHtml(item.lokasiKegiatan)}</td>
+                        <td>${escapeHtml(item.agendaKegiatan)}</td>
+                        <td>${escapeHtml(item.keterangan || '-')}</td>
+                        <td class="table-actions">
+                          <button
+                            class="secondary-button"
+                            type="button"
+                            data-edit-annual-activity="${escapeHtml(item.id)}">
+                            Edit
+                          </button>
+                          <button
+                            class="danger-button"
+                            type="button"
+                            data-delete-annual-activity="${escapeHtml(item.id)}">
+                            Hapus
+                          </button>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `
+            : `
+              <div class="empty-state-card">
+                <strong>Belum ada Kegiatan Tahunan.</strong>
+                <p>Tambahkan kegiatan tahunan untuk wilayah dan divisi Anda.</p>
+              </div>
+            `
+        }
+      </section>
+    </main>
+  `)
+
+  document.querySelector('#backAnnualActivity')?.addEventListener(
+    'click',
+    () => navigateTo('workspace'),
+  )
+
+  document.querySelector('#addAnnualActivity')?.addEventListener(
+    'click',
+    () => openAnnualActivityModal(),
+  )
+
+  document.querySelectorAll<HTMLElement>(
+    '[data-edit-annual-activity]',
+  ).forEach((button) => {
+    button.addEventListener('click', () => {
+      const id = button.dataset.editAnnualActivity
+      if (id) openAnnualActivityModal(id)
+    })
+  })
+
+  document.querySelectorAll<HTMLElement>(
+    '[data-delete-annual-activity]',
+  ).forEach((button) => {
+    button.addEventListener('click', async () => {
+      const id = button.dataset.deleteAnnualActivity
+
+      if (!id) return
+
+      if (!confirm('Hapus Kegiatan Tahunan ini?')) return
+
+      const profile = getDemoPksSession()
+
+      if (!profile) return
+
+      try {
+        await deleteAnnualActivity(profile, id)
+        await loadAnnualActivitiesFromSupabase()
+        renderAnnualActivity()
+      } catch (error) {
+        console.error('Gagal menghapus Kegiatan Tahunan:', error)
+        alert('Kegiatan Tahunan gagal dihapus.')
+      }
+    })
+  })
+}
+
+function openAnnualActivityModal(id?: string) {
+  const existing = id
+    ? annualActivities.find((item) => item.id === id)
+    : undefined
+
+  editingAnnualActivityId = existing?.id ?? null
+
+  const modal = document.createElement('div')
+  modal.className = 'modal-backdrop'
+  modal.id = 'annualActivityModal'
+
+  modal.innerHTML = `
+    <div class="modal event-editor-modal">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">MODUL 03</p>
+          <h2>${existing ? 'Edit Kegiatan Tahunan' : 'Tambah Kegiatan Tahunan'}</h2>
+        </div>
+
+        <button
+          class="close-button"
+          type="button"
+          id="closeAnnualActivityModal">
+          &times;
+        </button>
+      </div>
+
+      <form id="annualActivityForm">
+        <div class="form-section">
+          <h3>Informasi Kegiatan</h3>
+
+          <div class="form-grid form-grid-2">
+            <div class="field">
+              <label for="annualActivityNama">Nama Kegiatan</label>
+              <input
+                id="annualActivityNama"
+                type="text"
+                maxlength="200"
+                required
+                value="${escapeHtml(existing?.namaKegiatan || '')}" />
+            </div>
+
+            <div class="field">
+              <label for="annualActivityTanggal">Tanggal Kegiatan</label>
+              <input
+                id="annualActivityTanggal"
+                type="date"
+                required
+                value="${escapeHtml(existing?.tanggalKegiatan || '')}" />
+            </div>
+
+            <div class="field">
+              <label for="annualActivityTahun">Tahun Kegiatan</label>
+              <input
+                id="annualActivityTahun"
+                type="number"
+                min="2000"
+                max="2100"
+                required
+                value="${existing?.tahunKegiatan || new Date().getFullYear()}" />
+            </div>
+
+            <div class="field">
+              <label for="annualActivityLokasi">Lokasi Kegiatan</label>
+              <input
+                id="annualActivityLokasi"
+                type="text"
+                maxlength="250"
+                required
+                value="${escapeHtml(existing?.lokasiKegiatan || '')}" />
+            </div>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <h3>Agenda & Keterangan</h3>
+
+          <div class="form-grid form-grid-2">
+            <div class="field">
+              <label for="annualActivityAgenda">Agenda Kegiatan</label>
+              <textarea
+                id="annualActivityAgenda"
+                rows="5"
+                maxlength="5000"
+                required>${escapeHtml(existing?.agendaKegiatan || '')}</textarea>
+            </div>
+
+            <div class="field">
+              <label for="annualActivityKeterangan">Keterangan</label>
+              <textarea
+                id="annualActivityKeterangan"
+                rows="5"
+                maxlength="5000">${escapeHtml(existing?.keterangan || '')}</textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="section-heading-row">
+            <div>
+              <h3>Dokumentasi Foto</h3>
+              <p>Upload maksimal 5 foto dokumentasi kegiatan.</p>
+            </div>
+
+            <label class="upload-button">
+              + Upload Foto
+              <input
+                id="annualActivityPhotos"
+                type="file"
+                accept="image/*"
+                multiple
+                hidden />
+            </label>
+          </div>
+
+          <div class="photo-grid" id="annualActivityPhotoPreview"></div>
+        </div>
+
+        <div class="modal-footer">
+          <button
+            class="secondary-button"
+            type="button"
+            id="cancelAnnualActivity">
+            Batal
+          </button>
+
+          <button
+            class="primary-button"
+            type="submit">
+            Simpan Kegiatan
+          </button>
+        </div>
+      </form>
+    </div>
+  `
+
+  document.body.appendChild(modal)
+
+  let photos: PhotoData[] = existing?.photos
+    ? [...existing.photos]
+    : []
+
+  const renderPhotos = () => {
+    const preview =
+      document.querySelector<HTMLDivElement>(
+        '#annualActivityPhotoPreview',
+      )
+
+    if (!preview) return
+
+    preview.innerHTML = photos.length
+      ? photos.map((photo) => `
+          <div class="photo-item">
+            <img
+              src="${escapeHtml(photo.dataUrl)}"
+              alt="${escapeHtml(photo.name)}" />
+
+            <div class="photo-caption">
+              <span>${escapeHtml(photo.name)}</span>
+
+              <button
+                type="button"
+                data-remove-annual-activity-photo="${escapeHtml(photo.id)}">
+                Hapus
+              </button>
+            </div>
+          </div>
+        `).join('')
+      : '<p class="empty-state">Belum ada dokumentasi.</p>'
+  }
+
+  renderPhotos()
+
+  document
+    .querySelector<HTMLInputElement>('#annualActivityPhotos')
+    ?.addEventListener('change', async (event) => {
+      const input = event.currentTarget as HTMLInputElement
+
+      for (const file of Array.from(input.files ?? [])) {
+        if (photos.length >= 5) break
+
+        photos.push({
+          id: uid('annual-activity-photo'),
+          name: file.name,
+          dataUrl: await uploadEventPhoto(file),
+        })
+      }
+
+      input.value = ''
+      renderPhotos()
+    })
+
+  document
+    .querySelector('#annualActivityPhotoPreview')
+    ?.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLElement>(
+        '[data-remove-annual-activity-photo]',
+      )
+
+      if (!button) return
+
+      const id = button.dataset.removeAnnualActivityPhoto
+
+      photos = photos.filter((photo) => photo.id !== id)
+      renderPhotos()
+    })
+
+  document
+    .querySelector('#closeAnnualActivityModal')
+    ?.addEventListener('click', closeAnnualActivityModal)
+
+  document
+    .querySelector('#cancelAnnualActivity')
+    ?.addEventListener('click', closeAnnualActivityModal)
+
+  document
+    .querySelector<HTMLFormElement>('#annualActivityForm')
+    ?.addEventListener('submit', async (event) => {
+      event.preventDefault()
+
+      try {
+        const tanggal = valueOf('annualActivityTanggal')
+        const tahun = Number(valueOf('annualActivityTahun'))
+
+        if (!tanggal || !tahun) {
+          throw new Error('TANGGAL_DAN_TAHUN_WAJIB_DIISI')
+        }
+
+        const item: AnnualActivityItem = {
+          id: editingAnnualActivityId || uid('annual-activity'),
+          wilayah: getDemoPksSession()?.wilayah || '',
+          divisi: getDemoPksSession()?.divisi || '',
+          namaKegiatan: valueOf('annualActivityNama'),
+          tanggalKegiatan: tanggal,
+          tahunKegiatan: tahun,
+          lokasiKegiatan: valueOf('annualActivityLokasi'),
+          agendaKegiatan: valueOf('annualActivityAgenda'),
+          keterangan: valueOf('annualActivityKeterangan'),
+          photos,
+        }
+
+        if (
+          !item.namaKegiatan.trim() ||
+          !item.lokasiKegiatan.trim() ||
+          !item.agendaKegiatan.trim()
+        ) {
+          throw new Error('FIELD_KEGIATAN_WAJIB_DIISI')
+        }
+
+        await saveAnnualActivityToSupabase(item)
+        await loadAnnualActivitiesFromSupabase()
+        closeAnnualActivityModal()
+        renderAnnualActivity()
+      } catch (error) {
+        console.error('Gagal menyimpan Kegiatan Tahunan:', error)
+
+        alert(
+          error instanceof Error
+            ? error.message
+            : 'Kegiatan Tahunan gagal disimpan.',
+        )
+      }
+    })
+}
+
+function closeAnnualActivityModal() {
+  document.querySelector('#annualActivityModal')?.remove()
+  editingAnnualActivityId = null
+}
+function renderEventJemaat() {
+  const profile = getDemoPksSession()
+  if (!profile) {
+    renderDashboard()
+    return
+  }
+
+  const rows = eventsJemaat
+
+  renderShell(`
+    <main class="event-jemaat-page">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">MODUL 02</p>
+          <h1>Event Jemaat</h1>
+          <p>
+            Kelola informasi kegiatan jemaat untuk
+            ${profile.wilayah} - ${profile.divisi}.
+          </p>
+        </div>
+
+                <div class="page-heading-actions">
+          <button
+            class="secondary-button"
+            type="button"
+            id="backEventJemaat">
+            &#8592;Â Kembali
+          </button>
+
+          <button
+            class="primary-button"
+            type="button"
+            id="addEventJemaat">
+            + Tambah Event
+          </button>
+        </div>
+      </section>
+
+      <section class="workspace-identity">
+        <div>
+          <span>Wilayah</span>
+          <strong>${profile.wilayah}</strong>
+        </div>
+        <div>
+          <span>Divisi / Tim</span>
+          <strong>${profile.divisi}</strong>
+        </div>
+        <div>
+          <span>Komsel</span>
+          <strong>${profile.komsel}</strong>
+        </div>
+        <div>
+          <span>Jabatan</span>
+          <strong>${profile.jabatan}</strong>
+        </div>
+      </section>
+
+      <section class="table-card">
+        <div class="table-card-header">
+          <div>
+            <h2>Daftar Event Jemaat</h2>
+            <p>Event yang dibuat oleh akun PKS ini.</p>
+          </div>
+          <strong>${rows.length} event</strong>
+        </div>
+
+        ${
+          rows.length
+            ? `
+              <div class="table-wrapper">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>No.</th>
+                      <th>Nama Kegiatan</th>
+                      <th>Lokasi</th>
+                      <th>Tanggal</th>
+                      <th>Wilayah</th>
+                      <th>Divisi / Tim</th>
+                      <th>Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows
+                      .map(
+                        (event, index) => `
+                          <tr>
+                            <td>${index + 1}</td>
+                            <td>
+                              <strong>${event.nama || '-'}</strong>
+                            </td>
+                            <td>${event.lokasi || '-'}</td>
+                            <td>${event.tgl || '-'}</td>
+                            <td>${event.wilayah || profile.wilayah}</td>
+                            <td>${event.divisi || profile.divisi}</td>
+                            <td>
+                              <div class="table-actions">
+                                <button
+                                  class="secondary-button"
+                                  type="button"
+                                  data-edit-event="${event.id}">
+                                  Edit
+                                </button>
+                                <button
+                                  class="danger-button"
+                                  type="button"
+                                  data-delete-event="${event.id}">
+                                  Hapus
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        `
+                      )
+                      .join('')}
+                  </tbody>
+                </table>
+              </div>
+            `
+            : `
+                            <div class="empty-state-card">
+                <h2>Belum Ada Event</h2>
+                <p>
+                  Belum ada kegiatan jemaat yang dibuat oleh akun ini.
+                  Gunakan tombol <strong>+ Tambah Event</strong> untuk
+                  memasukkan kegiatan pertama.
+                </p>
+              </div>
+            `
+        }
+      </section>
+    </main>
+  `)
+
+    document.querySelector('#backEventJemaat')?.addEventListener('click', () => {
+    navigateTo('workspace')
+  })
+
+  document.querySelector('#addEventJemaat')?.addEventListener('click', () => {
+    openEventJemaatForm()
+  })
+
+  document.querySelectorAll<HTMLElement>('[data-edit-event]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const eventId = button.dataset.editEvent
+
+      if (!eventId) return
+
+      openEventJemaatForm(eventId)
+    })
+  })
+
+  document.querySelectorAll<HTMLElement>('[data-delete-event]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const eventId = button.dataset.deleteEvent
+
+      if (!eventId) return
+
+      const confirmed = window.confirm('Apakah anda ingin menghapus data tersebut ?')
+
+      if (!confirmed) return
+
+      try {
+        await deleteEventJemaat(eventId)
+        await loadEventsJemaat()
+        renderEventJemaat()
+      } catch (error) {
+        console.error(error)
+        alert(
+          error instanceof Error
+            ? error.message
+            : 'Gagal menghapus Event Jemaat.'
+        )
+      }
+    })
+  })
+}
+async function uploadEventPhoto(file: File) {
+  if (!file.type.startsWith('image/')) {
+    throw new Error(`File ${file.name} bukan file gambar.`)
+  }
+
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('upload_preset', 'sipapua_preset')
+
+  const response = await fetch(
+    'https://api.cloudinary.com/v1_1/dxzllsbgi/image/upload',
+    {
+      method: 'POST',
+      body: formData,
+    }
+  )
+
+  const data = await response.json() as {
+    secure_url?: string
+    error?: { message?: string }
+  }
+
+  if (!response.ok || !data.secure_url) {
+    throw new Error(
+      data.error?.message || `Gagal mengunggah ${file.name}.`
+    )
+  }
+
+  return data.secure_url
+}
+
+function openEventJemaatForm(id?: string) {
+  const profile = getDemoPksSession()
+
+  if (!profile) {
+    renderDashboard()
+    return
+  }
+
+  const existing = id
+    ? eventsJemaat.find((event) => event.id === id)
+    : undefined
+
+  if (id && !existing) {
+    alert('Data Event Jemaat tidak ditemukan.')
+    return
+  }
+
+  editingEventId = id ?? null
+
+  document.querySelector('#eventJemaatModal')?.remove()
+
+  document.body.insertAdjacentHTML(
+    'beforeend',
+    `
+      <div class="modal-backdrop" id="eventJemaatModal">
+        <div class="modal modal-large event-editor-modal">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow">MODUL 02</p>
+              <h2>${existing ? 'Edit Event Jemaat' : 'Tambah Event Jemaat'}</h2>
+              <p class="modal-subtitle">
+                Lengkapi informasi kegiatan yang akan ditampilkan kepada jemaat.
+              </p>
+            </div>
+
+            <button
+              class="close-button"
+              type="button"
+              id="closeEventJemaatModal"
+              aria-label="Tutup">
+              &times;
+            </button>
+          </div>
+
+          <form id="eventJemaatForm" class="event-editor-form">
+            <div class="event-editor-grid">
+              <section class="event-form-section">
+                <div class="section-heading">
+                  <span class="section-number">01</span>
+                  <div>
+                    <h3>Informasi Kegiatan</h3>
+                    <p>Data utama kegiatan jemaat.</p>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="eventNama">Nama Kegiatan *</label>
+                  <input
+                    id="eventNama"
+                    type="text"
+                    maxlength="160"
+                    value="${escapeHtml(existing?.nama ?? '')}"
+                    placeholder="Contoh: Ibadah Pemuda"
+                    required />
+                </div>
+
+                <div class="event-form-two-column">
+                  <div class="field">
+                    <label for="eventLokasi">Lokasi *</label>
+                    <input
+                      id="eventLokasi"
+                      type="text"
+                      maxlength="160"
+                      value="${escapeHtml(existing?.lokasi ?? '')}"
+                      placeholder="Contoh: Gedung Jemaat"
+                      required />
+                  </div>
+
+                  <div class="field">
+                    <label for="eventTanggal">Tanggal *</label>
+                    <input
+                      id="eventTanggal"
+                      type="date"
+                      value="${escapeHtml(existing?.tgl ?? '')}"
+                      required />
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="eventIsi">Isi Detail</label>
+                  <textarea
+                    id="eventIsi"
+                    rows="8"
+                    maxlength="5000"
+                    placeholder="Tuliskan informasi atau detail kegiatan jemaat...">${escapeHtml(existing?.isi ?? '')}</textarea>
+                </div>
+              </section>
+
+              <section class="event-form-section">
+                <div class="section-heading">
+                  <span class="section-number">02</span>
+                  <div>
+                    <h3>Dokumentasi Foto</h3>
+                    <p>Cloudinary &middot; maksimal 5 foto per event.</p>
+                  </div>
+                </div>
+
+                <div class="event-upload-box">
+                  <input
+                    id="eventPhotos"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    hidden />
+
+                  <label class="event-upload-label" for="eventPhotos">
+                    <span class="event-upload-icon">+</span>
+                    <strong>Pilih Foto</strong>
+                    <span>JPG, JPEG, PNG, WebP &middot; maksimal 5 foto</span>
+                  </label>
+
+                  <div class="event-upload-status" id="eventUploadStatus">
+                    ${existing?.fotos?.length ?? 0} / 5 foto
+                  </div>
+                </div>
+
+                <div
+                  class="event-photo-grid"
+                  id="eventPhotoPreview">
+                </div>
+              </section>
+
+              <section class="event-form-section event-form-section-full">
+                <div class="section-heading">
+                  <span class="section-number">03</span>
+                  <div>
+                    <h3>Identitas Akun</h3>
+                    <p>Otomatis mengikuti akun PKS yang sedang login.</p>
+                  </div>
+                </div>
+
+                <div class="event-account-grid">
+                  <div>
+                    <span>Wilayah</span>
+                    <strong>${escapeHtml(profile.wilayah)}</strong>
+                  </div>
+
+                  <div>
+                    <span>Divisi / Tim</span>
+                    <strong>${escapeHtml(profile.divisi)}</strong>
+                  </div>
+
+                  <div>
+                    <span>Komsel</span>
+                    <strong>${escapeHtml(profile.komsel)}</strong>
+                  </div>
+
+                  <div>
+                    <span>Jabatan</span>
+                    <strong>${escapeHtml(profile.jabatan)}</strong>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="modal-footer event-editor-footer">
+              <button
+                class="cancel-login-button"
+                type="button"
+                id="cancelEventJemaat">
+                Batal
+              </button>
+
+              <button
+                class="primary-button"
+                type="submit"
+                id="saveEventJemaatButton">
+                ${existing ? 'Simpan Perubahan' : 'Simpan Event'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `
+  )
+
+  let photoUrls = existing?.fotos ? [...existing.fotos] : []
+
+  const photoInput =
+    document.querySelector<HTMLInputElement>('#eventPhotos')
+
+  const preview =
+    document.querySelector<HTMLDivElement>('#eventPhotoPreview')
+
+  const uploadStatus =
+    document.querySelector<HTMLDivElement>('#eventUploadStatus')
+
+  const submitButton =
+    document.querySelector<HTMLButtonElement>('#saveEventJemaatButton')
+
+  const renderPhotoPreview = () => {
+    if (!preview) return
+
+    preview.innerHTML = photoUrls.length
+      ? photoUrls.map((url, index) => `
+          <article class="event-photo-card">
+            <img
+              src="${escapeHtml(url)}"
+              alt="Dokumentasi Event Jemaat ${index + 1}" />
+
+            <button
+              type="button"
+              class="event-photo-remove"
+              data-remove-event-photo="${index}"
+              aria-label="Hapus foto">
+              &times;
+            </button>
+
+            <span>Foto ${index + 1}</span>
+          </article>
+        `).join('')
+      : `
+          <div class="event-photo-empty">
+            Belum ada foto dokumentasi.
+          </div>
+        `
+
+    preview
+      .querySelectorAll<HTMLButtonElement>(
+        '[data-remove-event-photo]'
+      )
+      .forEach((button) => {
+        button.addEventListener('click', () => {
+          const index = Number(button.dataset.removeEventPhoto)
+
+          if (!Number.isInteger(index)) return
+
+          photoUrls.splice(index, 1)
+          renderPhotoPreview()
+        })
+      })
+
+    if (uploadStatus) {
+      uploadStatus.textContent = `${photoUrls.length} / 5 foto`
+    }
+  }
+
+  renderPhotoPreview()
+
+  photoInput?.addEventListener('change', async () => {
+    const files = Array.from(photoInput.files ?? [])
+
+    if (!files.length) return
+
+    const availableSlots = 5 - photoUrls.length
+
+    if (files.length > availableSlots) {
+      alert(
+        availableSlots > 0
+          ? `Maksimal 5 foto. Anda masih dapat menambahkan ${availableSlots} foto.`
+          : 'Maksimal 5 foto sudah tercapai.'
+      )
+
+      photoInput.value = ''
+      return
+    }
+
+    photoInput.disabled = true
+
+    if (submitButton) {
+      submitButton.disabled = true
+    }
+
+    if (uploadStatus) {
+      uploadStatus.textContent = 'Mengunggah foto ke Cloudinary...'
+    }
+
+    try {
+      for (const file of files) {
+        const secureUrl = await uploadEventPhoto(file)
+        photoUrls.push(secureUrl)
+        renderPhotoPreview()
+      }
+    } catch (error) {
+      console.error('Gagal upload foto Event Jemaat:', error)
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Gagal mengunggah foto Event Jemaat.'
+      )
+    } finally {
+      photoInput.disabled = false
+
+      if (submitButton) {
+        submitButton.disabled = false
+      }
+
+      photoInput.value = ''
+      renderPhotoPreview()
+    }
+  })
+
+  const closeModal = () => {
+    document.querySelector('#eventJemaatModal')?.remove()
+    editingEventId = null
+  }
+
+  document
+    .querySelector('#closeEventJemaatModal')
+    ?.addEventListener('click', closeModal)
+
+  document
+    .querySelector('#cancelEventJemaat')
+    ?.addEventListener('click', closeModal)
+
+  document
+    .querySelector('#eventJemaatModal')
+    ?.addEventListener('click', (event) => {
+      if (event.target === event.currentTarget) {
+        closeModal()
+      }
+    })
+
+  document
+    .querySelector('#eventJemaatForm')
+    ?.addEventListener('submit', async (event) => {
+      event.preventDefault()
+
+      const form = event.currentTarget as HTMLFormElement
+
+      const nama = valueOf('eventNama').trim()
+      const lokasi = valueOf('eventLokasi').trim()
+      const tgl = valueOf('eventTanggal').trim()
+      const isi = valueOf('eventIsi').trim()
+
+      if (!nama || !lokasi || !tgl) {
+        alert('Nama Kegiatan, Lokasi, dan Tanggal wajib diisi.')
+        return
+      }
+
+      if (photoUrls.length > 5) {
+        alert('Maksimal 5 foto per event.')
+        return
+      }
+
+      const button =
+        form.querySelector<HTMLButtonElement>(
+          '#saveEventJemaatButton'
+        )
+
+      if (button) {
+        button.disabled = true
+        button.textContent = 'Menyimpan...'
+      }
+
+      try {
+        if (editingEventId) {
+          await updateEventJemaat(editingEventId, {
+            nama,
+            lokasi,
+            tgl,
+            isi,
+            fotos: photoUrls,
+          })
+        } else {
+          await saveEventJemaat({
+            nama,
+            lokasi,
+            tgl,
+            isi,
+            fotos: photoUrls,
+            createdBy: profile.nama,
+            createdAt: new Date().toISOString(),
+            wilayah: profile.wilayah,
+            divisi: profile.divisi,
+            komsel: profile.komsel,
+            jabatan: profile.jabatan,
+            ownerUid: profile.uid,
+            ownerEmail: profile.email,
+            ownerNama: profile.nama,
+          })
+        }
+
+        closeModal()
+        await loadEventsJemaat()
+        renderEventJemaat()
+      } catch (error) {
+        console.error('Gagal menyimpan Event Jemaat:', error)
+
+        if (button) {
+          button.disabled = false
+          button.textContent = existing
+            ? 'Simpan Perubahan'
+            : 'Simpan Event'
+        }
+
+        alert(
+          error instanceof Error
+            ? error.message
+            : 'Gagal menyimpan Event Jemaat.'
+        )
+      }
+    })
+}
 function renderAgenda() {
   const rows = filteredAgendas()
 
@@ -600,12 +1770,21 @@ function renderAgenda() {
           </p>
         </div>
 
-        <button
-          class="primary-button"
-          type="button"
-          id="addAgenda">
-          + Tambah Program
-        </button>
+                <div class="page-heading-actions">
+          <button
+            class="secondary-button"
+            type="button"
+            id="backAgenda">
+            &#8592;Â Kembali
+          </button>
+
+          <button
+            class="primary-button"
+            type="button"
+            id="addAgenda">
+            + Tambah Program
+          </button>
+        </div>
       </section>
 
       <section class="filter-panel">
@@ -820,7 +1999,12 @@ function renderAgenda() {
         </div>
       </section>
     </main>
-  `, true)
+  `)
+
+    document.querySelector('#backAgenda')?.addEventListener(
+    'click',
+    () => navigateTo('workspace')
+  )
 
   document.querySelector('#addAgenda')?.addEventListener(
     'click',
@@ -1154,11 +2338,11 @@ function openAgendaForm(id?: string) {
             </div>
           </div>
 
-          <div class="modal-footer">
+                    <div class="modal-footer">
             <button
               class="secondary-button"
-              type="button"
-              id="cancelAgenda">
+              id="cancelAgenda"
+              type="button">
               Batal
             </button>
 
@@ -1244,7 +2428,7 @@ function openAgendaForm(id?: string) {
           photos.push({
             id: uid('photo'),
             name: file.name,
-            dataUrl: await compressImage(file),
+            dataUrl: await uploadEventPhoto(file),
           })
         } catch {
           alert(`Foto "${file.name}" tidak dapat diproses.`)
@@ -1299,7 +2483,7 @@ function openAgendaForm(id?: string) {
         agendas.push(item)
       }
 
-      await saveAgendaToFirestore(item)
+      await saveAgendaToSupabase(item)
 
       filters.tahun = String(item.tahun)
 
@@ -1328,7 +2512,7 @@ async function deleteAgenda(id: string) {
   if (!confirmed) return
 
   try {
-    await deleteAgendaFromFirestore(id)
+    await deleteAgendaFromSupabase(id)
     agendas = agendas.filter((item) => item.id !== id)
     renderAgenda()
   } catch (error) {
@@ -1347,7 +2531,7 @@ async function deleteSelectedAgendas() {
   const ids = Array.from(selectedAgendaIds)
 
   try {
-    await Promise.all(ids.map((id) => deleteAgendaFromFirestore(id)))
+    await Promise.all(ids.map((id) => deleteAgendaFromSupabase(id)))
 
     agendas = agendas.filter((item) => !selectedAgendaIds.has(item.id))
     selectedAgendaIds.clear()
@@ -1356,69 +2540,6 @@ async function deleteSelectedAgendas() {
     console.error('Gagal menghapus agenda terpilih:', error)
     alert('Sebagian agenda gagal dihapus.')
   }
-}
-
-function compressImage(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-
-    reader.onerror = () => reject(new Error('file-read-error'))
-
-    reader.onload = () => {
-      const image = new Image()
-
-      image.onerror = () => reject(new Error('image-load-error'))
-
-      image.onload = () => {
-        const maxSize = 1600
-
-        const scale = Math.min(
-          1,
-          maxSize / Math.max(image.width, image.height)
-        )
-
-        const width = Math.max(
-          1,
-          Math.round(image.width * scale)
-        )
-
-        const height = Math.max(
-          1,
-          Math.round(image.height * scale)
-        )
-
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-
-        const context = canvas.getContext('2d')
-
-        if (!context) {
-          reject(new Error('canvas-error'))
-          return
-        }
-
-        context.drawImage(
-          image,
-          0,
-          0,
-          width,
-          height
-        )
-
-        resolve(
-          canvas.toDataURL(
-            'image/jpeg',
-            0.78
-          )
-        )
-      }
-
-      image.src = String(reader.result)
-    }
-
-    reader.readAsDataURL(file)
-  })
 }
 
 async function exportPpt() {
@@ -2090,11 +3211,32 @@ function handleRoute() {
     return
   }
 
+  if (route === 'event-jemaat') {
+    if (!requirePksSession()) return
+
+    loadEventsJemaat().finally(() => {
+      renderEventJemaat()
+    })
+
+    return
+  }
+
   if (route === 'agenda') {
     if (!requirePksSession()) return
 
-    loadAgendasFromFirestore().finally(() => {
+    loadAgendasFromSupabase().finally(() => {
       renderAgenda()
+    })
+
+    return
+  }
+
+
+  if (route === 'annual-report') {
+    if (!requirePksSession()) return
+
+    loadAnnualActivitiesFromSupabase().finally(() => {
+      renderAnnualActivity()
     })
 
     return
