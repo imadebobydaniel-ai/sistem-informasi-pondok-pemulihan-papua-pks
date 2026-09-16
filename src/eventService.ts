@@ -189,7 +189,6 @@ export async function deleteEvent(
     .delete()
     .eq('id', eventId)
     .eq('owner_id', profile.uid)
-    .eq('status', 'draft')
 
   if (error) throw error
 }
