@@ -34,11 +34,72 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate Supabase configuration
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$VITE_SUPABASE_URL" || {
+            echo "ERROR: VITE_SUPABASE_URL kosong"
+            exit 1
+          }
+
+          test -n "$VITE_SUPABASE_PUBLISHABLE_KEY" || {
+            echo "ERROR: VITE_SUPABASE_PUBLISHABLE_KEY kosong"
+            exit 1
+          }
+
+          if [[ ! "$VITE_SUPABASE_PUBLISHABLE_KEY" =~ ^sb_publishable_[A-Za-z0-9._-]+$ ]]; then
+            echo "ERROR: VITE_SUPABASE_PUBLISHABLE_KEY bukan format publishable key yang valid"
+            exit 1
+          fi
+
+          KEY_LENGTH=${#VITE_SUPABASE_PUBLISHABLE_KEY}
+          KEY_SHA256=$(printf '%s' "$VITE_SUPABASE_PUBLISHABLE_KEY" | sha256sum | awk '{print $1}')
+
+          echo "Supabase URL: OK"
+          echo "Publishable key prefix: sb_publishable_"
+          echo "Publishable key length: $KEY_LENGTH"
+          echo "Publishable key SHA256: $KEY_SHA256"
+
+          if [[ "$KEY_LENGTH" -lt 30 ]]; then
+            echo "ERROR: publishable key terlalu pendek; kemungkinan placeholder/truncated value"
+            exit 1
+          fi
+
       - name: Build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
+
+      - name: Verify built Supabase configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! grep -R -q 'cfnimvrxrnmefmxtzqks.supabase.co' dist/assets --include='*.js'; then
+            echo "ERROR: Supabase project URL tidak ditemukan pada bundle"
+            exit 1
+          fi
+
+          LIVE_KEY=$(grep -RhoE 'sb_publishable_[A-Za-z0-9._-]{15,}' dist/assets --include='*.js' \
+            | awk 'length($0) >= 30 { print; exit }')
+
+          if [[ -z "$LIVE_KEY" ]]; then
+            echo "ERROR: publishable key aktual tidak ditemukan pada bundle"
+            exit 1
+          fi
+
+          KEY_LENGTH=${#LIVE_KEY}
+          KEY_SHA256=$(printf '%s' "$LIVE_KEY" | sha256sum | awk '{print $1}')
+
+          echo "Supabase project URL: OK"
+          echo "Built publishable key length: $KEY_LENGTH"
+          echo "Built publishable key SHA256: $KEY_SHA256"
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
@@ -51,3 +112,8 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+
+
+
+
