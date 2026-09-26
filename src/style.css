@@ -1938,3 +1938,144 @@ button.module-link:hover,
     flex: 1 1 100%;
   }
 }
+
+/* SIPAPUA UI REFINEMENT v1 */
+
+/* Form controls: ukuran dan jarak konsisten */
+.field input:not([type="checkbox"]):not([type="radio"]),
+.field select,
+.field textarea {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.field input:not([type="checkbox"]):not([type="radio"]),
+.field select {
+  min-height: 42px;
+}
+
+.field textarea {
+  min-height: 96px;
+  line-height: 1.5;
+}
+
+/* Label form */
+.field label {
+  line-height: 1.4;
+}
+
+/* Tombol: teks selalu rata tengah dan tidak terlalu rapat */
+.primary-button,
+.secondary-button,
+.danger-button,
+.login-button,
+.cancel-login-button,
+.close-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  line-height: 1.2;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+/* Ukuran tombol utama */
+.primary-button,
+.secondary-button,
+.danger-button,
+.login-button,
+.cancel-login-button {
+  min-height: 42px;
+  padding: 10px 16px;
+}
+
+/* Tombol close tetap compact */
+.close-button {
+  flex: 0 0 auto;
+}
+
+/* Footer form/modal */
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Tombol password tetap nyaman */
+.password-field {
+  width: 100%;
+}
+
+.password-field input {
+  box-sizing: border-box;
+}
+
+.password-toggle {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+/* Tombol di heading */
+.page-heading-actions > button {
+  min-width: 110px;
+}
+
+/* Action tabel tidak saling berhimpitan */
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.table-actions > button {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+/* Khusus halaman Event Jemaat */
+.event-jemaat-page .page-heading-actions > button {
+  min-width: 110px;
+}
+
+.event-jemaat-page .table-actions > button {
+  min-width: 74px;
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  .modal-footer {
+    width: 100%;
+  }
+
+  .modal-footer > button {
+    flex: 1 1 140px;
+    min-height: 44px;
+  }
+
+  .page-heading-actions > button {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .table-actions > button {
+    flex: 1 1 100px;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .danger-button,
+  .login-button,
+  .cancel-login-button {
+    min-height: 44px;
+  }
+}

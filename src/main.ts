@@ -281,6 +281,10 @@ function escapeHtml(value: unknown) {
     .replaceAll("'", '&#039;')
 }
 
+function displayText(value: unknown) {
+  return String(value ?? '').replaceAll('\\&', '&')
+}
+
 function years() {
   const currentYear = new Date().getFullYear()
   return Array.from(
@@ -508,22 +512,22 @@ function openModuleInfo(title: string, description: string, status: string) {
 
   const html = '<div class="modal-backdrop" id="moduleInfoModal">' +
     '<div class="modal" style="max-width:520px;">' +
-      '<div class="modal-header">' +
-        '<div>' +
-          '<p class="eyebrow">INFORMASI MODUL</p>' +
-          '<h2>' + title + '</h2>' +
-        '</div>' +
-        '<button class="close-button" type="button" id="closeModuleInfo" aria-label="Tutup">Tutup</button>' +
-      '</div>' +
-      '<div style="padding:20px;">' +
-        '<p style="margin:0 0 14px;line-height:1.7;color:#4b635d;">' + description + '</p>' +
-        '<div style="padding:12px 14px;border-radius:10px;background:#f4f8f6;color:#06382f;font-weight:700;">' + status + '</div>' +
-        '<div class="modal-footer">' +
-          '<button class="primary-button" type="button" id="closeModuleInfoButton">Tutup</button>' +
-        '</div>' +
-      '</div>' +
+    '<div class="modal-header">' +
+    '<div>' +
+    '<p class="eyebrow">INFORMASI MODUL</p>' +
+    '<h2>' + title + '</h2>' +
     '</div>' +
-  '</div>'
+    '<button class="close-button" type="button" id="closeModuleInfo" aria-label="Tutup">Tutup</button>' +
+    '</div>' +
+    '<div style="padding:20px;">' +
+    '<p style="margin:0 0 14px;line-height:1.7;color:#4b635d;">' + description + '</p>' +
+    '<div style="padding:12px 14px;border-radius:10px;background:#f4f8f6;color:#06382f;font-weight:700;">' + status + '</div>' +
+    '<div class="modal-footer">' +
+    '<button class="primary-button" type="button" id="closeModuleInfoButton">Tutup</button>' +
+    '</div>' +
+    '</div>' +
+    '</div>' +
+    '</div>'
 
   document.body.insertAdjacentHTML('beforeend', html)
 
@@ -609,7 +613,7 @@ function renderDashboard() {
 }
 
 function renderPksWorkspace() {
-  const profile=getDemoPksSession()
+  const profile = getDemoPksSession()
   if (!profile) {
     renderDashboard()
     return
@@ -627,7 +631,7 @@ function renderPksWorkspace() {
 
       <section class="workspace-identity">
         <div><span>Wilayah</span><strong>${profile.wilayah}</strong></div>
-        <div><span>Divisi / Tim</span><strong>${profile.divisi}</strong></div>
+        <div><span>Divisi / Tim</span><strong>${escapeHtml(displayText(profile.divisi))}</strong></div>
         <div><span>Komsel</span><strong>${profile.komsel}</strong></div>
         <div><span>Jabatan</span><strong>${profile.jabatan}</strong></div>
       </section>
@@ -657,10 +661,10 @@ function renderPksWorkspace() {
     </main>
   `)
 
-  document.querySelector("#openWorkspaceAgenda")?.addEventListener("click",()=>navigateTo("agenda"))
-  document.querySelector("#openWorkspaceEventJemaat")?.addEventListener("click",()=>navigateTo("event-jemaat"))
-  document.querySelector("#openWorkspaceAnnualActivity")?.addEventListener("click",()=>navigateTo("annual-report"))
-  document.querySelector("#logoutPksButton")?.addEventListener("click",()=>{
+  document.querySelector("#openWorkspaceAgenda")?.addEventListener("click", () => navigateTo("agenda"))
+  document.querySelector("#openWorkspaceEventJemaat")?.addEventListener("click", () => navigateTo("event-jemaat"))
+  document.querySelector("#openWorkspaceAnnualActivity")?.addEventListener("click", () => navigateTo("annual-report"))
+  document.querySelector("#logoutPksButton")?.addEventListener("click", () => {
     logoutDemoPks()
 
     navigateTo('dashboard')
@@ -741,7 +745,7 @@ function renderAnnualActivity() {
           <p class="eyebrow">MODUL 03</p>
           <h1>Kegiatan Tahunan</h1>
           <p>
-            Kelola kegiatan tahunan untuk ${profile.wilayah} - ${profile.divisi}.
+            Kelola kegiatan tahunan untuk ${profile.wilayah} - ${escapeHtml(displayText(profile.divisi))}.
           </p>
         </div>
 
@@ -770,9 +774,8 @@ function renderAnnualActivity() {
       </section>
 
       <section class="table-card">
-        ${
-          rows.length
-            ? `
+        ${rows.length
+      ? `
               <div class="table-wrap">
                 <table>
                   <thead>
@@ -815,13 +818,13 @@ function renderAnnualActivity() {
                 </table>
               </div>
             `
-            : `
+      : `
               <div class="empty-state-card">
                 <strong>Belum ada Kegiatan Tahunan.</strong>
                 <p>Tambahkan kegiatan tahunan untuk wilayah dan divisi Anda.</p>
               </div>
             `
-        }
+    }
       </section>
     </main>
   `)
@@ -1157,7 +1160,7 @@ function renderEventJemaat() {
           <h1>Event Jemaat</h1>
           <p>
             Kelola informasi kegiatan jemaat untuk
-            ${profile.wilayah} - ${profile.divisi}.
+            ${profile.wilayah} - ${escapeHtml(displayText(profile.divisi))}.
           </p>
         </div>
 
@@ -1166,7 +1169,7 @@ function renderEventJemaat() {
             class="secondary-button"
             type="button"
             id="backEventJemaat">
-            &#8592;Â Kembali
+            Kembali
           </button>
 
           <button
@@ -1185,7 +1188,7 @@ function renderEventJemaat() {
         </div>
         <div>
           <span>Divisi / Tim</span>
-          <strong>${profile.divisi}</strong>
+          <strong>${escapeHtml(displayText(profile.divisi))}</strong>
         </div>
         <div>
           <span>Komsel</span>
@@ -1206,9 +1209,8 @@ function renderEventJemaat() {
           <strong>${rows.length} event</strong>
         </div>
 
-        ${
-          rows.length
-            ? `
+        ${rows.length
+      ? `
               <div class="table-wrapper">
                 <table class="data-table">
                   <thead>
@@ -1224,8 +1226,8 @@ function renderEventJemaat() {
                   </thead>
                   <tbody>
                     ${rows
-                      .map(
-                        (event, index) => `
+        .map(
+          (event, index) => `
                           <tr>
                             <td>${index + 1}</td>
                             <td>
@@ -1253,13 +1255,13 @@ function renderEventJemaat() {
                             </td>
                           </tr>
                         `
-                      )
-                      .join('')}
+        )
+        .join('')}
                   </tbody>
                 </table>
               </div>
             `
-            : `
+      : `
                             <div class="empty-state-card">
                 <h2>Belum Ada Event</h2>
                 <p>
@@ -1269,12 +1271,12 @@ function renderEventJemaat() {
                 </p>
               </div>
             `
-        }
+    }
       </section>
     </main>
   `)
 
-    document.querySelector('#backEventJemaat')?.addEventListener('click', () => {
+  document.querySelector('#backEventJemaat')?.addEventListener('click', () => {
     navigateTo('workspace')
   })
 
@@ -1775,7 +1777,7 @@ function renderAgenda() {
             class="secondary-button"
             type="button"
             id="backAgenda">
-            &#8592;Â Kembali
+            Kembali
           </button>
 
           <button
@@ -1815,9 +1817,8 @@ function renderAgenda() {
       </section>
 
       <section class="table-card">
-        ${
-          rows.length
-            ? `
+        ${rows.length
+      ? `
               <div class="table-toolbar">
   <div class="selection-actions">
     <label class="select-all-label">
@@ -1920,11 +1921,10 @@ function renderAgenda() {
                         </td>
 
                         <td>
-                          ${
-                            item.photos.length
-                              ? `<span class="photo-count">Foto: ${item.photos.length} foto</span>`
-                              : `<span class="muted">Belum ada</span>`
-                          }
+                          ${item.photos.length
+          ? `<span class="photo-count">Foto: ${item.photos.length} foto</span>`
+          : `<span class="muted">Belum ada</span>`
+        }
                         </td>
 
                         <td>
@@ -1950,7 +1950,7 @@ function renderAgenda() {
                 </table>
               </div>
             `
-            : `
+      : `
               <div class="empty-state">
                 <div class="empty-icon">01</div>
 
@@ -1969,7 +1969,7 @@ function renderAgenda() {
                 </button>
               </div>
             `
-        }
+    }
       </section>
 
       <section class="export-panel">
@@ -2001,7 +2001,7 @@ function renderAgenda() {
     </main>
   `)
 
-    document.querySelector('#backAgenda')?.addEventListener(
+  document.querySelector('#backAgenda')?.addEventListener(
     'click',
     () => navigateTo('workspace')
   )
@@ -2194,9 +2194,9 @@ function openAgendaForm(id?: string) {
 
                 <select id="formPeriode" required>
                   ${optionList(
-                    periode,
-                    existing?.periode || periode[0]
-                  )}
+    periode,
+    existing?.periode || periode[0]
+  )}
                 </select>
               </div>
 
@@ -2205,9 +2205,9 @@ function openAgendaForm(id?: string) {
 
                 <select id="formBulan" required>
                   ${optionList(
-                    bulan,
-                    existing?.bulan || bulan[0]
-                  )}
+    bulan,
+    existing?.bulan || bulan[0]
+  )}
                 </select>
               </div>
             </div>
@@ -3189,12 +3189,12 @@ function exportCsv() {
   URL.revokeObjectURL(url)
 }
 
-function navigateTo(route:string) {
-  const normalized=route.replace(/^#/, '') || 'dashboard'
-  window.location.hash=normalized
+function navigateTo(route: string) {
+  const normalized = route.replace(/^#/, '') || 'dashboard'
+  window.location.hash = normalized
 }
 
-function requirePksSession():boolean {
+function requirePksSession(): boolean {
   if (getDemoPksSession()) return true
 
   navigateTo('dashboard')
@@ -3203,7 +3203,7 @@ function requirePksSession():boolean {
 }
 
 function handleRoute() {
-  const route=(window.location.hash || '#dashboard').replace(/^#/, '')
+  const route = (window.location.hash || '#dashboard').replace(/^#/, '')
 
   if (route === 'workspace') {
     if (!requirePksSession()) return
