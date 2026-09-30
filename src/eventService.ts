@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { DemoPksProfile } from './demoAuth'
+import { requirePksAdmin, type DemoPksProfile } from './demoAuth'
 
 export type SupabaseEventItem = {
   id: string
@@ -25,6 +25,29 @@ export type SupabaseEventPhoto = {
   sort_order: number
 }
 
+type SupabaseErrorLike = {
+  message?: string
+  code?: string
+  hint?: string | null
+}
+
+// postgrest-js returns plain error objects (not Error instances), so convert
+// them into an Error whose message carries the Supabase code and hint.
+export function toSupabaseError(error: unknown, context: string): Error {
+  if (error instanceof Error) return error
+
+  const { message, code, hint } = (error ?? {}) as SupabaseErrorLike
+  const parts = [`${context}: ${message || 'kesalahan tidak diketahui'}`]
+
+  if (code) parts.push(`(kode ${code})`)
+  if (code === '42501') {
+    parts.push('Akun tidak memiliki izin untuk operasi ini.')
+  }
+  if (hint) parts.push(`Petunjuk: ${hint}`)
+
+  return new Error(parts.join(' '), { cause: error })
+}
+
 export async function listMyEvents(profile: DemoPksProfile) {
   const { data: events, error: eventsError } = await supabase
     .from('events')
@@ -35,7 +58,7 @@ export async function listMyEvents(profile: DemoPksProfile) {
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
 
-  if (eventsError) throw eventsError
+  if (eventsError) throw toSupabaseError(eventsError, 'Event Jemaat gagal dimuat')
 
   if (!events?.length) {
     return []
@@ -51,7 +74,7 @@ export async function listMyEvents(profile: DemoPksProfile) {
     .in('event_id', eventIds)
     .order('sort_order', { ascending: true })
 
-  if (photosError) throw photosError
+  if (photosError) throw toSupabaseError(photosError, 'Foto Event Jemaat gagal dimuat')
 
   const photosByEvent = new Map<string, SupabaseEventPhoto[]>()
 
@@ -85,8 +108,8 @@ export async function createEvent(
       lokasi: input.lokasi,
       tanggal: input.tgl,
       isi: input.isi || null,
-      status: 'published',
-      published_at: new Date().toISOString(),
+      // RLS only lets PKS create their own drafts; an admin publishes later.
+      status: 'draft',
     })
     .select(
       'id,nama,lokasi,tanggal,isi,status,created_at,updated_at,published_at,published_by,deleted_at,owner_id',
@@ -94,7 +117,10 @@ export async function createEvent(
     .single()
 
   if (eventError || !event) {
-    throw eventError ?? new Error('EVENT_CREATE_FAILED')
+    throw toSupabaseError(
+      eventError ?? new Error('EVENT_CREATE_FAILED'),
+      'Event Jemaat gagal disimpan',
+    )
   }
 
   if (input.fotos.length) {
@@ -114,7 +140,7 @@ export async function createEvent(
         .delete()
         .eq('id', event.id)
 
-      throw photoError
+      throw toSupabaseError(photoError, 'Foto Event Jemaat gagal disimpan')
     }
   }
 
@@ -149,7 +175,10 @@ export async function updateEvent(
     .single()
 
   if (eventError || !event) {
-    throw eventError ?? new Error('EVENT_UPDATE_FAILED')
+    throw toSupabaseError(
+      eventError ?? new Error('EVENT_UPDATE_FAILED'),
+      'Event Jemaat gagal diperbarui',
+    )
   }
 
   const { error: deletePhotosError } = await supabase
@@ -158,7 +187,7 @@ export async function updateEvent(
     .eq('event_id', eventId)
 
   if (deletePhotosError) {
-    throw deletePhotosError
+    throw toSupabaseError(deletePhotosError, 'Foto lama Event Jemaat gagal dihapus')
   }
 
   if (input.fotos.length) {
@@ -173,8 +202,82 @@ export async function updateEvent(
       )
 
     if (photoError) {
-      throw photoError
+      throw toSupabaseError(photoError, 'Foto Event Jemaat gagal disimpan')
     }
+  }
+
+  return event
+}
+
+const EVENT_COLUMNS =
+  'id,nama,lokasi,tanggal,isi,status,created_at,updated_at,published_at,published_by,deleted_at,owner_id'
+
+export type ReviewEventItem = {
+  event: SupabaseEventItem
+  owner: { nama: string; wilayah: string; divisi: string } | null
+}
+
+// Admin review list: drafts from every PKS plus published events. RLS
+// ("Admin can view all events" / is_pks_admin()) decides what is returned.
+export async function listEventsForReview(): Promise<ReviewEventItem[]> {
+  const { data: events, error } = await supabase
+    .from('events')
+    .select(EVENT_COLUMNS)
+    .in('status', ['draft', 'published'])
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(200)
+
+  if (error) throw toSupabaseError(error, 'Daftar review Event Jemaat gagal dimuat')
+
+  if (!events?.length) {
+    return []
+  }
+
+  const ownerIds = [...new Set(events.map((event) => event.owner_id))]
+  const { data: owners, error: ownersError } = await supabase
+    .from('pks_profiles')
+    .select('id,nama,wilayah,divisi')
+    .in('id', ownerIds)
+
+  // Owner details are informational; the review list still works without them.
+  if (ownersError) {
+    console.warn('Profil pemilik event tidak dapat dimuat:', ownersError)
+  }
+
+  const ownersById = new Map((owners ?? []).map((owner) => [owner.id, owner]))
+
+  return events.map((event) => ({
+    event,
+    owner: ownersById.get(event.owner_id) ?? null,
+  }))
+}
+
+// Publishes a single draft. The admin check and published_by come from the
+// verified Supabase session here, never from the caller. Filtering on
+// status='draft' means an already published event, or a row RLS hides from
+// non-admins, updates nothing.
+export async function publishEvent(eventId: string) {
+  const admin = await requirePksAdmin()
+
+  const { data: event, error } = await supabase
+    .from('events')
+    .update({
+      status: 'published',
+      published_at: new Date().toISOString(),
+      published_by: admin.uid,
+    })
+    .eq('id', eventId)
+    .eq('status', 'draft')
+    .select(EVENT_COLUMNS)
+    .maybeSingle()
+
+  if (error) throw toSupabaseError(error, 'Event Jemaat gagal dipublikasikan')
+
+  if (!event) {
+    throw new Error(
+      'Event tidak dapat dipublikasikan: event tidak ditemukan, sudah dipublikasikan, atau akun Anda bukan admin.',
+    )
   }
 
   return event
@@ -190,5 +293,5 @@ export async function deleteEvent(
     .eq('id', eventId)
     .eq('owner_id', profile.uid)
 
-  if (error) throw error
+  if (error) throw toSupabaseError(error, 'Event Jemaat gagal dihapus')
 }
