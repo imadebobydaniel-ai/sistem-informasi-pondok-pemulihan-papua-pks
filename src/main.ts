@@ -1189,7 +1189,8 @@ function closeAnnualActivityModal() {
   document.querySelector('#annualActivityModal')?.remove()
   editingAnnualActivityId = null
 }
-// Only drafts are editable by PKS (RLS and updateEvent); an admin publishes.
+// Only drafts are editable or deletable by PKS (RLS and updateEvent); an admin
+// publishes, and the Administrator archives a published event to withdraw it.
 function eventStatusBadge(status: EventJemaatItem['status']) {
   if (status === 'published') {
     return '<span class="template-badge">Published</span>'
@@ -1197,6 +1198,10 @@ function eventStatusBadge(status: EventJemaatItem['status']) {
 
   if (status === 'draft') {
     return '<span class="template-badge" style="background:#fff4d6;color:#8a5a00;" title="Menunggu review admin sebelum dipublikasikan">Draft</span>'
+  }
+
+  if (status === 'archived') {
+    return '<span class="template-badge" style="background:#fde8e8;color:#9b1c1c;" title="Ditarik dari publik oleh Administrator. Data tetap tersimpan sebagai history.">Archived / Dihapus Administrator</span>'
   }
 
   return `<span class="template-badge" style="background:#eceff1;color:#455a64;">${escapeHtml(status)}</span>`
@@ -1460,20 +1465,30 @@ function renderEventJemaat() {
                               <div class="table-actions">
                                 ${event.status === 'draft'
             ? `
+                                ${profile.role === 'admin'
+              ? `
+                                <button
+                                  class="primary-button"
+                                  type="button"
+                                  data-publish-event="${event.id}">
+                                  Publish
+                                </button>
+                                `
+              : ''}
                                 <button
                                   class="secondary-button"
                                   type="button"
                                   data-edit-event="${event.id}">
                                   Edit
                                 </button>
-                                `
-            : ''}
                                 <button
                                   class="danger-button"
                                   type="button"
                                   data-delete-event="${event.id}">
                                   Hapus
                                 </button>
+                                `
+            : '-'}
                               </div>
                             </td>
                           </tr>
@@ -1525,6 +1540,32 @@ function renderEventJemaat() {
       if (!eventId) return
 
       openEventJemaatForm(eventId)
+    })
+  })
+
+  document.querySelectorAll<HTMLButtonElement>('[data-publish-event]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const eventId = button.dataset.publishEvent
+
+      if (!eventId) return
+
+      const confirmed = window.confirm('Publikasikan Event Jemaat ini?')
+
+      if (!confirmed) return
+
+      button.disabled = true
+      button.textContent = 'Mempublikasikan...'
+
+      try {
+        await publishEvent(eventId)
+        await loadEventsJemaat()
+        renderEventJemaat()
+      } catch (error) {
+        console.error('Gagal mempublikasikan Event Jemaat:', error)
+        button.disabled = false
+        button.textContent = 'Publish'
+        showEventJemaatError(error, 'Gagal mempublikasikan Event Jemaat.')
+      }
     })
   })
 
