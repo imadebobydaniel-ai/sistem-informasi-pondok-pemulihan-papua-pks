@@ -2,8 +2,8 @@ import './style.css'
 import logoIbn from './assets/logo-ibn.png'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { loginDemoPks, logoutDemoPks, getDemoPksSession, requireSupabaseSession, requirePksAdmin, SupabaseSessionExpiredError } from './demoAuth'
-import { listMyEvents, createEvent, updateEvent, deleteEvent, listEventsForReview, publishEvent, type ReviewEventItem } from './eventService'
+import { loginDemoPks, logoutDemoPks, getDemoPksSession, requireSupabaseSession, SupabaseSessionExpiredError } from './demoAuth'
+import { listMyEvents, createEvent, updateEvent, deleteEvent, publishEvent } from './eventService'
 import { listMyAgendas, createAgenda, updateAgenda, deleteAgenda as deleteAgendaSupabase } from './agendaService'
 import { listMyAnnualActivities, createAnnualActivity, updateAnnualActivity, deleteAnnualActivity } from './annualActivityService'
 type PhotoData = {
@@ -133,26 +133,6 @@ async function loadEventsJemaat() {
     eventsJemaatLoadError =
       error instanceof Error ? error.message : 'Event Jemaat gagal dimuat.'
     eventsJemaatSessionExpired = error instanceof SupabaseSessionExpiredError
-  }
-}
-
-let reviewEvents: ReviewEventItem[] = []
-let reviewLoadError: string | null = null
-let reviewSessionExpired = false
-
-async function loadReviewEvents() {
-  reviewLoadError = null
-  reviewSessionExpired = false
-
-  try {
-    await requirePksAdmin()
-    reviewEvents = await listEventsForReview()
-  } catch (error) {
-    console.error('Gagal memuat Review Event:', error)
-    reviewEvents = []
-    reviewLoadError =
-      error instanceof Error ? error.message : 'Review Event gagal dimuat.'
-    reviewSessionExpired = error instanceof SupabaseSessionExpiredError
   }
 }
 
@@ -692,16 +672,6 @@ function renderPksWorkspace() {
           <p>Kelola kegiatan tahunan berdasarkan nama kegiatan, tanggal, lokasi, agenda, keterangan, dan dokumentasi foto.</p>
           <button class="module-link" type="button" id="openWorkspaceAnnualActivity">Buka Modul</button>
         </article>
-        ${profile.role === 'admin'
-      ? `
-        <article class="module-card">
-          <div class="module-icon">04</div>
-          <h2>Review Event</h2>
-          <p>Tinjau Draft Event Jemaat dari seluruh PKS dan publikasikan ke halaman Event Jemaat.</p>
-          <button class="module-link" type="button" id="openWorkspaceReviewEvent">Buka Modul</button>
-        </article>
-        `
-      : ''}
       </section>
     </main>
   `)
@@ -709,7 +679,6 @@ function renderPksWorkspace() {
   document.querySelector("#openWorkspaceAgenda")?.addEventListener("click", () => navigateTo("agenda"))
   document.querySelector("#openWorkspaceEventJemaat")?.addEventListener("click", () => navigateTo("event-jemaat"))
   document.querySelector("#openWorkspaceAnnualActivity")?.addEventListener("click", () => navigateTo("annual-report"))
-  document.querySelector("#openWorkspaceReviewEvent")?.addEventListener("click", () => navigateTo("review-event"))
   document.querySelector("#logoutPksButton")?.addEventListener("click", () => {
     logoutDemoPks()
 
@@ -1189,15 +1158,15 @@ function closeAnnualActivityModal() {
   document.querySelector('#annualActivityModal')?.remove()
   editingAnnualActivityId = null
 }
-// Only drafts are editable or deletable by PKS (RLS and updateEvent); an admin
-// publishes, and the Administrator archives a published event to withdraw it.
+// PKS users can edit, delete, and publish their own drafts. Published events
+// are archived separately by the Administrator.
 function eventStatusBadge(status: EventJemaatItem['status']) {
   if (status === 'published') {
     return '<span class="template-badge">Published</span>'
   }
 
   if (status === 'draft') {
-    return '<span class="template-badge" style="background:#fff4d6;color:#8a5a00;" title="Menunggu review admin sebelum dipublikasikan">Draft</span>'
+    return '<span class="template-badge" style="background:#fff4d6;color:#8a5a00;" title="Event ini masih berupa draft">Draft</span>'
   }
 
   if (status === 'archived') {
@@ -1205,151 +1174,6 @@ function eventStatusBadge(status: EventJemaatItem['status']) {
   }
 
   return `<span class="template-badge" style="background:#eceff1;color:#455a64;">${escapeHtml(status)}</span>`
-}
-
-function renderReviewEvents() {
-  const profile = getDemoPksSession()
-  if (!profile) {
-    renderDashboard()
-    return
-  }
-
-  // Drafts awaiting review first, newest first within each status.
-  const rows = [...reviewEvents].sort((first, second) =>
-    Number(first.event.status !== 'draft') - Number(second.event.status !== 'draft')
-    || second.event.created_at.localeCompare(first.event.created_at)
-  )
-  const draftCount = rows.filter((row) => row.event.status === 'draft').length
-
-  renderShell(`
-    <main class="event-jemaat-page">
-      <section class="page-heading">
-        <div>
-          <p class="eyebrow">ADMIN</p>
-          <h1>Review Event</h1>
-          <p>Draft Event Jemaat dari seluruh PKS. Event yang dipublikasikan akan tampil di halaman Event Jemaat.</p>
-        </div>
-        <div class="page-heading-actions">
-          <button class="secondary-button" type="button" id="backReviewEvent">Kembali</button>
-        </div>
-      </section>
-
-      <section class="table-card">
-        <div class="table-card-header">
-          <div>
-            <h2>Daftar Event</h2>
-            <p>${draftCount} draft menunggu review.</p>
-          </div>
-          <strong>${rows.length} event</strong>
-        </div>
-
-        ${reviewLoadError
-      ? `
-              <div class="empty-state-card" role="alert">
-                <h2>Review Event Gagal Dimuat</h2>
-                <p>${escapeHtml(reviewLoadError)}</p>
-                <button class="primary-button" type="button" id="retryReviewEvent">
-                  ${reviewSessionExpired ? 'Login Kembali' : 'Coba Lagi'}
-                </button>
-              </div>
-            `
-      : rows.length
-      ? `
-              <div class="table-wrapper">
-                <table class="data-table">
-                  <thead>
-                    <tr>
-                      <th>No.</th>
-                      <th>Nama Kegiatan</th>
-                      <th>Pemilik</th>
-                      <th>Wilayah</th>
-                      <th>Divisi / Tim</th>
-                      <th>Tanggal</th>
-                      <th>Lokasi</th>
-                      <th>Status</th>
-                      <th>Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${rows
-        .map(
-          ({ event, owner }, index) => `
-                          <tr>
-                            <td>${index + 1}</td>
-                            <td><strong>${escapeHtml(event.nama || '-')}</strong></td>
-                            <td>${escapeHtml(owner?.nama || '-')}</td>
-                            <td>${escapeHtml(owner?.wilayah || '-')}</td>
-                            <td>${escapeHtml(displayText(owner?.divisi || '-'))}</td>
-                            <td>${escapeHtml(event.tanggal || '-')}</td>
-                            <td>${escapeHtml(event.lokasi || '-')}</td>
-                            <td>${eventStatusBadge(event.status)}</td>
-                            <td>
-                              ${event.status === 'draft'
-            ? `
-                              <button class="primary-button" type="button" data-publish-event="${escapeHtml(event.id)}">
-                                Publish
-                              </button>
-                              `
-            : '-'}
-                            </td>
-                          </tr>
-                        `
-        )
-        .join('')}
-                  </tbody>
-                </table>
-              </div>
-            `
-      : `
-              <div class="empty-state-card">
-                <h2>Belum Ada Event</h2>
-                <p>Tidak ada Draft maupun event Published untuk ditinjau.</p>
-              </div>
-            `}
-      </section>
-    </main>
-  `)
-
-  document.querySelector('#backReviewEvent')?.addEventListener('click', () => {
-    navigateTo('workspace')
-  })
-
-  document.querySelector('#retryReviewEvent')?.addEventListener('click', () => {
-    if (reviewSessionExpired) {
-      endExpiredPksSession()
-      return
-    }
-
-    loadReviewEvents().finally(() => {
-      renderReviewEvents()
-    })
-  })
-
-  document.querySelectorAll<HTMLButtonElement>('[data-publish-event]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const eventId = button.dataset.publishEvent
-
-      if (!eventId) return
-
-      const confirmed = window.confirm('Publikasikan event ini ke halaman Event Jemaat?')
-
-      if (!confirmed) return
-
-      button.disabled = true
-      button.textContent = 'Mempublikasikan...'
-
-      try {
-        await publishEvent(eventId)
-        await loadReviewEvents()
-        renderReviewEvents()
-      } catch (error) {
-        console.error('Gagal mempublikasikan Event Jemaat:', error)
-        button.disabled = false
-        button.textContent = 'Publish'
-        showEventJemaatError(error, 'Gagal mempublikasikan Event Jemaat.')
-      }
-    })
-  })
 }
 
 function renderEventJemaat() {
@@ -1465,16 +1289,6 @@ function renderEventJemaat() {
                               <div class="table-actions">
                                 ${event.status === 'draft'
             ? `
-                                ${profile.role === 'admin'
-              ? `
-                                <button
-                                  class="primary-button"
-                                  type="button"
-                                  data-publish-event="${event.id}">
-                                  Publish
-                                </button>
-                                `
-              : ''}
                                 <button
                                   class="secondary-button"
                                   type="button"
@@ -1486,6 +1300,12 @@ function renderEventJemaat() {
                                   type="button"
                                   data-delete-event="${event.id}">
                                   Hapus
+                                </button>
+                                <button
+                                  class="primary-button"
+                                  type="button"
+                                  data-publish-event="${event.id}">
+                                  PUBLISH
                                 </button>
                                 `
             : '-'}
@@ -3487,16 +3307,6 @@ function handleRoute() {
 
     loadEventsJemaat().finally(() => {
       renderEventJemaat()
-    })
-
-    return
-  }
-
-  if (route === 'review-event') {
-    if (!requirePksSession()) return
-
-    loadReviewEvents().finally(() => {
-      renderReviewEvents()
     })
 
     return

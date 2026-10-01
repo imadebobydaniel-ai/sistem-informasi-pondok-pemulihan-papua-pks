@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { requirePksAdmin, type DemoPksProfile } from './demoAuth'
+import { requireSupabaseSession, type DemoPksProfile } from './demoAuth'
 
 export type SupabaseEventItem = {
   id: string
@@ -108,7 +108,7 @@ export async function createEvent(
       lokasi: input.lokasi,
       tanggal: input.tgl,
       isi: input.isi || null,
-      // RLS only lets PKS create their own drafts; an admin publishes later.
+      // The owner ID comes from the verified Supabase Auth session.
       status: 'draft',
     })
     .select(
@@ -212,62 +212,19 @@ export async function updateEvent(
 const EVENT_COLUMNS =
   'id,nama,lokasi,tanggal,isi,status,created_at,updated_at,published_at,published_by,deleted_at,owner_id'
 
-export type ReviewEventItem = {
-  event: SupabaseEventItem
-  owner: { nama: string; wilayah: string; divisi: string } | null
-}
-
-// Admin review list: drafts from every PKS plus published events. RLS
-// ("Admin can view all events" / is_pks_admin()) decides what is returned.
-export async function listEventsForReview(): Promise<ReviewEventItem[]> {
-  const { data: events, error } = await supabase
-    .from('events')
-    .select(EVENT_COLUMNS)
-    .in('status', ['draft', 'published'])
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .limit(200)
-
-  if (error) throw toSupabaseError(error, 'Daftar review Event Jemaat gagal dimuat')
-
-  if (!events?.length) {
-    return []
-  }
-
-  const ownerIds = [...new Set(events.map((event) => event.owner_id))]
-  const { data: owners, error: ownersError } = await supabase
-    .from('pks_profiles')
-    .select('id,nama,wilayah,divisi')
-    .in('id', ownerIds)
-
-  // Owner details are informational; the review list still works without them.
-  if (ownersError) {
-    console.warn('Profil pemilik event tidak dapat dimuat:', ownersError)
-  }
-
-  const ownersById = new Map((owners ?? []).map((owner) => [owner.id, owner]))
-
-  return events.map((event) => ({
-    event,
-    owner: ownersById.get(event.owner_id) ?? null,
-  }))
-}
-
-// Publishes a single draft. The admin check and published_by come from the
-// verified Supabase session here, never from the caller. Filtering on
-// status='draft' means an already published event, or a row RLS hides from
-// non-admins, updates nothing.
+// Publishes a draft owned by the currently authenticated PKS user.
 export async function publishEvent(eventId: string) {
-  const admin = await requirePksAdmin()
+  const owner = await requireSupabaseSession()
 
   const { data: event, error } = await supabase
     .from('events')
     .update({
       status: 'published',
       published_at: new Date().toISOString(),
-      published_by: admin.uid,
+      published_by: owner.uid,
     })
     .eq('id', eventId)
+    .eq('owner_id', owner.uid)
     .eq('status', 'draft')
     .select(EVENT_COLUMNS)
     .maybeSingle()
@@ -276,7 +233,7 @@ export async function publishEvent(eventId: string) {
 
   if (!event) {
     throw new Error(
-      'Event tidak dapat dipublikasikan: event tidak ditemukan, sudah dipublikasikan, atau akun Anda bukan admin.',
+      'Event tidak dapat dipublikasikan: event tidak ditemukan, bukan milik akun Anda, atau statusnya bukan Draft.',
     )
   }
 
@@ -292,6 +249,7 @@ export async function deleteEvent(
     .delete()
     .eq('id', eventId)
     .eq('owner_id', profile.uid)
+    .eq('status', 'draft')
 
   if (error) throw toSupabaseError(error, 'Event Jemaat gagal dihapus')
 }

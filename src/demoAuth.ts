@@ -123,23 +123,6 @@ export async function requireSupabaseSession(): Promise<DemoPksProfile> {
   return profile
 }
 
-// The cached role is only a UI hint; admin rights are decided by the database
-// function is_pks_admin() for the current Supabase Auth user.
-export async function requirePksAdmin(): Promise<DemoPksProfile> {
-  const profile = await requireSupabaseSession()
-  const { data: isAdmin, error } = await supabase.rpc('is_pks_admin')
-
-  if (error) {
-    throw new Error(`Status admin tidak dapat diperiksa: ${error.message}`)
-  }
-
-  if (isAdmin !== true) {
-    throw new Error('Akun ini bukan admin PKS aktif.')
-  }
-
-  return profile
-}
-
 export async function logoutDemoPks() {
   sessionStorage.removeItem(DEMO_STORAGE_KEY)
   await supabase.auth.signOut()
