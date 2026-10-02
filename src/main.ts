@@ -2,8 +2,8 @@ import './style.css'
 import logoIbn from './assets/logo-ibn.png'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { loginDemoPks, logoutDemoPks, getDemoPksSession } from './demoAuth'
-import { listMyEvents, createEvent, updateEvent, deleteEvent } from './eventService'
+import { loginDemoPks, logoutDemoPks, getDemoPksSession, requireSupabaseSession, SupabaseSessionExpiredError } from './demoAuth'
+import { listMyEvents, createEvent, updateEvent, deleteEvent, publishEvent } from './eventService'
 import { listMyAgendas, createAgenda, updateAgenda, deleteAgenda as deleteAgendaSupabase } from './agendaService'
 import { listMyAnnualActivities, createAnnualActivity, updateAnnualActivity, deleteAnnualActivity } from './annualActivityService'
 type PhotoData = {
@@ -28,6 +28,7 @@ type EventJemaatItem = {
   ownerUid: string
   ownerEmail: string
   ownerNama: string
+  status: 'draft' | 'published' | 'archived'
 }
 type AgendaItem = {
   id: string
@@ -94,14 +95,15 @@ let annualActivities: AnnualActivityItem[] = []
 let editingAnnualActivityId: string | null = null
 let editingEventId: string | null = null
 
-async function loadEventsJemaat() {
-  try {
-    const profile = getDemoPksSession()
+let eventsJemaatLoadError: string | null = null
+let eventsJemaatSessionExpired = false
 
-    if (!profile) {
-      eventsJemaat = []
-      return
-    }
+async function loadEventsJemaat() {
+  eventsJemaatLoadError = null
+  eventsJemaatSessionExpired = false
+
+  try {
+    const profile = await requireSupabaseSession()
 
     const items = await listMyEvents(profile)
 
@@ -123,21 +125,36 @@ async function loadEventsJemaat() {
       ownerUid: event.owner_id,
       ownerEmail: profile.email,
       ownerNama: profile.nama,
+      status: event.status,
     }))
   } catch (error) {
     console.error('Gagal memuat Event Jemaat:', error)
     eventsJemaat = []
+    eventsJemaatLoadError =
+      error instanceof Error ? error.message : 'Event Jemaat gagal dimuat.'
+    eventsJemaatSessionExpired = error instanceof SupabaseSessionExpiredError
+  }
+}
+
+// Clears the stale PKS profile and Supabase session, then opens the login.
+function endExpiredPksSession() {
+  logoutDemoPks().catch((error) => console.error('Gagal keluar dari sesi PKS:', error))
+  navigateTo('dashboard')
+  setTimeout(() => openPksLogin(), 0)
+}
+
+function showEventJemaatError(error: unknown, fallback: string) {
+  alert(error instanceof Error ? error.message : fallback)
+
+  if (error instanceof SupabaseSessionExpiredError) {
+    endExpiredPksSession()
   }
 }
 
 async function saveEventJemaat(
-  input: Omit<EventJemaatItem, 'id'>
+  input: Omit<EventJemaatItem, 'id' | 'status'>
 ) {
-  const profile = getDemoPksSession()
-
-  if (!profile) {
-    throw new Error('Sesi PKS tidak ditemukan.')
-  }
+  const profile = await requireSupabaseSession()
 
   return createEvent(profile, {
     nama: input.nama,
@@ -152,11 +169,7 @@ async function updateEventJemaat(
   eventId: string,
   input: Pick<EventJemaatItem, 'nama' | 'lokasi' | 'tgl' | 'isi' | 'fotos'>
 ) {
-  const profile = getDemoPksSession()
-
-  if (!profile) {
-    throw new Error('Sesi PKS tidak ditemukan.')
-  }
+  const profile = await requireSupabaseSession()
 
   return updateEvent(profile, eventId, {
     nama: input.nama,
@@ -168,11 +181,7 @@ async function updateEventJemaat(
 }
 
 async function deleteEventJemaat(eventId: string) {
-  const profile = getDemoPksSession()
-
-  if (!profile) {
-    throw new Error('Sesi PKS tidak ditemukan.')
-  }
+  const profile = await requireSupabaseSession()
 
   await deleteEvent(profile, eventId)
 }
@@ -408,6 +417,12 @@ function openPksLogin() {
                 </button>
               </div>
             </div>
+          </div>
+
+          <div
+            id="loginError"
+            role="alert"
+            style="display:none;margin-top:12px;color:#b42318;font-size:13px;font-weight:600;">
           </div>
 
           <div class="modal-footer">
@@ -1143,6 +1158,24 @@ function closeAnnualActivityModal() {
   document.querySelector('#annualActivityModal')?.remove()
   editingAnnualActivityId = null
 }
+// PKS users can edit, delete, and publish their own drafts. Published events
+// are archived separately by the Administrator.
+function eventStatusBadge(status: EventJemaatItem['status']) {
+  if (status === 'published') {
+    return '<span class="template-badge">Published</span>'
+  }
+
+  if (status === 'draft') {
+    return '<span class="template-badge" style="background:#fff4d6;color:#8a5a00;" title="Event ini masih berupa draft">Draft</span>'
+  }
+
+  if (status === 'archived') {
+    return '<span class="template-badge" style="background:#fde8e8;color:#9b1c1c;" title="Ditarik dari publik oleh Administrator. Data tetap tersimpan sebagai history.">Archived / Dihapus Administrator</span>'
+  }
+
+  return `<span class="template-badge" style="background:#eceff1;color:#455a64;">${escapeHtml(status)}</span>`
+}
+
 function renderEventJemaat() {
   const profile = getDemoPksSession()
   if (!profile) {
@@ -1209,7 +1242,20 @@ function renderEventJemaat() {
           <strong>${rows.length} event</strong>
         </div>
 
-        ${rows.length
+        ${eventsJemaatLoadError
+      ? `
+              <div class="empty-state-card" role="alert">
+                <h2>Event Jemaat Gagal Dimuat</h2>
+                <p>${escapeHtml(eventsJemaatLoadError)}</p>
+                <button
+                  class="primary-button"
+                  type="button"
+                  id="retryEventJemaat">
+                  ${eventsJemaatSessionExpired ? 'Login Kembali' : 'Coba Lagi'}
+                </button>
+              </div>
+            `
+      : rows.length
       ? `
               <div class="table-wrapper">
                 <table class="data-table">
@@ -1221,6 +1267,7 @@ function renderEventJemaat() {
                       <th>Tanggal</th>
                       <th>Wilayah</th>
                       <th>Divisi / Tim</th>
+                      <th>Status</th>
                       <th>Aksi</th>
                     </tr>
                   </thead>
@@ -1237,8 +1284,11 @@ function renderEventJemaat() {
                             <td>${event.tgl || '-'}</td>
                             <td>${event.wilayah || profile.wilayah}</td>
                             <td>${event.divisi || profile.divisi}</td>
+                            <td>${eventStatusBadge(event.status)}</td>
                             <td>
                               <div class="table-actions">
+                                ${event.status === 'draft'
+            ? `
                                 <button
                                   class="secondary-button"
                                   type="button"
@@ -1251,6 +1301,14 @@ function renderEventJemaat() {
                                   data-delete-event="${event.id}">
                                   Hapus
                                 </button>
+                                <button
+                                  class="primary-button"
+                                  type="button"
+                                  data-publish-event="${event.id}">
+                                  PUBLISH
+                                </button>
+                                `
+            : '-'}
                               </div>
                             </td>
                           </tr>
@@ -1284,6 +1342,17 @@ function renderEventJemaat() {
     openEventJemaatForm()
   })
 
+  document.querySelector('#retryEventJemaat')?.addEventListener('click', () => {
+    if (eventsJemaatSessionExpired) {
+      endExpiredPksSession()
+      return
+    }
+
+    loadEventsJemaat().finally(() => {
+      renderEventJemaat()
+    })
+  })
+
   document.querySelectorAll<HTMLElement>('[data-edit-event]').forEach((button) => {
     button.addEventListener('click', () => {
       const eventId = button.dataset.editEvent
@@ -1291,6 +1360,32 @@ function renderEventJemaat() {
       if (!eventId) return
 
       openEventJemaatForm(eventId)
+    })
+  })
+
+  document.querySelectorAll<HTMLButtonElement>('[data-publish-event]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const eventId = button.dataset.publishEvent
+
+      if (!eventId) return
+
+      const confirmed = window.confirm('Publikasikan Event Jemaat ini?')
+
+      if (!confirmed) return
+
+      button.disabled = true
+      button.textContent = 'Mempublikasikan...'
+
+      try {
+        await publishEvent(eventId)
+        await loadEventsJemaat()
+        renderEventJemaat()
+      } catch (error) {
+        console.error('Gagal mempublikasikan Event Jemaat:', error)
+        button.disabled = false
+        button.textContent = 'Publish'
+        showEventJemaatError(error, 'Gagal mempublikasikan Event Jemaat.')
+      }
     })
   })
 
@@ -1310,11 +1405,7 @@ function renderEventJemaat() {
         renderEventJemaat()
       } catch (error) {
         console.error(error)
-        alert(
-          error instanceof Error
-            ? error.message
-            : 'Gagal menghapus Event Jemaat.'
-        )
+        showEventJemaatError(error, 'Gagal menghapus Event Jemaat.')
       }
     })
   })
@@ -1747,11 +1838,11 @@ function openEventJemaatForm(id?: string) {
             : 'Simpan Event'
         }
 
-        alert(
-          error instanceof Error
-            ? error.message
-            : 'Gagal menyimpan Event Jemaat.'
-        )
+        if (error instanceof SupabaseSessionExpiredError) {
+          closeModal()
+        }
+
+        showEventJemaatError(error, 'Gagal menyimpan Event Jemaat.')
       }
     })
 }

@@ -1,6 +1,14 @@
-﻿import { supabase } from './supabase'
+﻿import { isAuthRetryableFetchError } from '@supabase/supabase-js'
+import { supabase } from './supabase'
 
 const DEMO_STORAGE_KEY = 'sipapua-pks-demo-session-v2'
+
+export class SupabaseSessionExpiredError extends Error {
+  constructor() {
+    super('Sesi login Anda telah berakhir. Silakan login kembali.')
+    this.name = 'SupabaseSessionExpiredError'
+  }
+}
 
 export type DemoPksProfile = {
   uid: string
@@ -10,7 +18,7 @@ export type DemoPksProfile = {
   divisi: string
   komsel: string
   jabatan: string
-  role: 'pks'
+  role: 'pks' | 'admin'
   status: 'active'
 }
 
@@ -51,7 +59,7 @@ export async function loginDemoPks(
     throw new Error('PKS_PROFILE_NOT_FOUND')
   }
 
-  if (profile.role !== 'pks') {
+  if (profile.role !== 'pks' && profile.role !== 'admin') {
     await supabase.auth.signOut()
     throw new Error('PKS_ROLE_INVALID')
   }
@@ -89,6 +97,30 @@ export function getDemoPksSession(): DemoPksProfile | null {
     sessionStorage.removeItem(DEMO_STORAGE_KEY)
     return null
   }
+}
+
+// The PKS profile in sessionStorage is only a cache. Supabase writes need a
+// live Supabase Auth session for the same user, so verify it with the server.
+export async function requireSupabaseSession(): Promise<DemoPksProfile> {
+  const profile = getDemoPksSession()
+
+  if (!profile) {
+    throw new SupabaseSessionExpiredError()
+  }
+
+  const { data, error } = await supabase.auth.getUser()
+
+  if (error && isAuthRetryableFetchError(error)) {
+    throw new Error(
+      'Tidak dapat menghubungi server login. Periksa koneksi lalu coba lagi.',
+    )
+  }
+
+  if (error || !data.user || data.user.id !== profile.uid) {
+    throw new SupabaseSessionExpiredError()
+  }
+
+  return profile
 }
 
 export async function logoutDemoPks() {
